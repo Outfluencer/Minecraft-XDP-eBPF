@@ -1,23 +1,25 @@
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
-#include <linux/udp.h>
 #include <linux/tcp.h>
 #include <linux/in.h>
 #include <bpf/bpf_helpers.h>
 #include <stdint.h>
-// fuck this htons method
+
+// htons method you know
 #define htons(x) ((uint16_t)((((x) & 0xff00) >> 8) | (((x) & 0x00ff) << 8)))
 
-// MAX LENGTH'S
+// Minecraft server port
+const uint16_t MINECRAFT_PORT = htons(25565);
 
-// PACKET LEN - PACKET ID - DATA
-const int MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
-const int MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
-const int MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
-const int PING_REQUEST_LEN = 10; // drop empty names instantly
+// lru map update delay for connection tracking
+const __u64 TIME_UPDATE = 1000000000;
 
+// Definitions
+// if defined signatures in login payloads are allowed (needed for 1.19 - 1.19.3 login)
 // #define SIGNATURE_LOGIN
+// if defines send a rst to the protected server to force close the connection.
+#define INJECT_RESET
 
 #ifdef SIGNATURE_LOGIN
     const int MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2;
@@ -25,17 +27,24 @@ const int PING_REQUEST_LEN = 10; // drop empty names instantly
     const int MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 16;    
 #endif
 
-// STATE TRACKING
+// PACKET LEN - PACKET ID - DATA
+const int MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
+const int MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
+const int MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
+const int PING_REQUEST_LEN = 10; // drop empty names instantly
 
+
+// return code to indicate invalid packet length
+const int INVALID_LEN = 200;
+// return code to disable the filter for the connection
+const int DISABLE_FILTER = 1000;
+
+// STATE TRACKING
 const __u8 AWAIT_ACK = 1;
 const __u8 AWAIT_STATUS_REQUEST = 3;
 const __u8 AWAIT_LOGIN = 4;
 const __u8 AWAIT_PING = 5;
-
 const __u8 AWAIT_MC_HANDSHAKE = 10; // counting this higher is alowed for counting invalid packets
-
-
-const int DISABLE_FILTER = 1000;
 
 // Connection tracking map (LRU) to track active flows (both TCP and UDP)
 struct flow_key_t { __u64 key; };  // dummy struct to align 64-bit key if needed
@@ -53,7 +62,6 @@ struct {
     __type(value, __u64); // last seen timestamp (ns) or state info
 } player_connection_map SEC(".maps");
 
-// *** Helper Functions ***
 
 // Parse TCP header (returns NULL if out-of-bounds)
 static __always_inline struct tcphdr *parse_tcp(void *data, void *data_end, struct iphdr *ip) {
@@ -73,12 +81,8 @@ static __always_inline __u64 generate_flow_key(__u32 src_ip, __u32 dst_ip, __u16
     key |= (__u64)src_port << 16;
     key |= (__u64)protocol << 8;
     key |= (__u64)(dst_port & 0xFF);
-    // (Note: if needed, include dst_ip and full ports for complete uniqueness, but here assume server IP/port fixed)
     return key;
 }
-
-
-
 
 // Check for TCP bypass attempt via abnormal flags or state
 static __always_inline int detect_tcp_bypass(struct tcphdr *tcp) {
@@ -94,36 +98,68 @@ static __always_inline int detect_tcp_bypass(struct tcphdr *tcp) {
     return 0;
 }
 
-
-static __always_inline int inspect_status_request(void *data, void *data_end) {
-    __u8 *start = (__u8 *)data;
-    __u8 *end = (__u8 *)data_end;
-    __u32 size = end - start;
-    if (size != 2) return 0;
-
-    if (start < end) {
-        if (*(signed char *)(start) != 1) {
-            return 0;
+// Read Minecraft varint
+static __always_inline uint32_t read_varint_sized(signed char *start, signed char *end, int32_t *return_value, char max_size) {
+    // i don't do loops in ebf
+    if (max_size >= 1 && start + 1 <= end) {
+        signed char first = start[0];
+        if ((first & 0x80) != 0x80) {
+            *return_value = first;
+            return 1;
+        } else {
+            if (max_size >= 2 && start + 2 <= end) {
+                signed char second = start[1];
+                if ((second & 0x80) != 0x80) {
+                    *return_value = (first & 0x7F) | ((second & 0x7F) << 7);
+                    return 2;
+                } else {
+                    if (max_size >= 3 && start + 3 <= end) {
+                        signed char third = start[2];
+                        if ((third & 0x80) != 0x80) {
+                            *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14);
+                            return 3;
+                        } else {
+                            if (max_size >= 4 && start + 4 <= end) {
+                                signed char fourth = start[3];
+                                if ((fourth & 0x80) != 0x80) {
+                                    *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21);
+                                    return 4;
+                                } else {
+                                    if (max_size >= 5 && start + 5 <= end) {
+                                        signed char fifth = start[4];
+                                        if ((fifth & 0x80) != 0x80) {
+                                            *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21) | ((fifth & 0x7F) << 28);
+                                            return 5;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-    } 
-
-    if (start + 1 < end) {
-        if (*(signed char *)(start + 1) != 0) {
-            return 0;
-        }
-    } 
-    return 1;
+    }
+    return 0;
 }
 
-static __always_inline int inspect_login_packet(void *data, void *data_end) {
-    __u8 *start = (__u8 *)data;
-    __u8 *end = (__u8 *)data_end;
+// Helper method
+static __always_inline uint32_t read_varint(signed char *start, signed char *end, int32_t *return_value) {
+    return read_varint_sized(start, end, return_value, 5);
+}
+
+// Check for valid status request packet
+static __always_inline int inspect_status_request(signed char *start, signed char *end) {
+    return start + 2 <= end && start[0] == 1 && start[1] == 0;
+}
+
+// Check for valid login request packet
+static __always_inline int inspect_login_packet(signed char *start, signed char *end) {
     __u32 size = end - start;
     if (size < MIN_LOGIN_LEN || size > MAX_LOGIN_LEN) return 0; 
     #ifndef SIGNATURE_LOGIN
-        if (start + 1 < end) {
-            signed char c = *(signed char *)(start + 1);
-            if (c != 0) { // packet id musst be 0;
+        if (start + 2 <= end) { // second byte is packet id;
+            if (start[1] != 0) { // packet id musst be 0;
                 return 0;
             }
         } 
@@ -132,159 +168,105 @@ static __always_inline int inspect_login_packet(void *data, void *data_end) {
 }
 
 
+// Check for valid handshake packet
+// Note: it happens that the handshake and login or status request are in the same packet, 
+// so we have to check for both cases here.
+// this can also happen after retransmition.
+static int inspect_handshake(signed char *start, signed char *end) {
 
-static __always_inline int inspect_handshake(void *data, void *data_end) {
-    __u8 *start = (__u8 *)data;
-    __u8 *end = (__u8 *)data_end;
     __u32 size = end - start;
-    if (size > MAX_HANDSHAKE_LEN + MAX_LOGIN_LEN || size < MIN_HANDSHAKE_LEN) return 0; // + 1 + (16*3) + 1 + 8 +512+4096 + 5 + 5
-    __u32 position = 0;
-    int packetLen = 0;
-    if (start < end) {
-	    signed char byte = *(signed char *)(start);
-	    if (byte < 0) { // i dont care & 0x80 same tho
-            if (start + 1 < end) {
-                signed char byte2 = *(signed char *)(start + 1);
-                if (byte2 < 0) {
-                    // to long handshake fuck this connection
-                    return 0;
-                } 
-                if (start + 2 < end) {
-                    signed char packetId = *(signed char *)(start + 2); // should always be 0
-                    if (packetId != 0) {
-                        // invalid packet id
-                        return 0;
-                    }
-                } else {
-                    return 0;
-                }
+    if (size > MAX_HANDSHAKE_LEN + MAX_LOGIN_LEN || size < MIN_HANDSHAKE_LEN) {
+        return INVALID_LEN;
+    }
 
-                packetLen = (byte & 0x7F) | (byte2 << 7) + 2;
-                position = 3;
+    signed char *reader_index = start;
+    int32_t packetLen;
+    uint32_t position = read_varint(start, end, &packetLen);
+    if (!position) {
+        return 0;
+    };
+    reader_index += position;
+
+    int32_t packetId;
+    uint32_t packetIdIndex = read_varint(reader_index, end, &packetId);
+    if (!packetIdIndex) {
+        return 0;
+    };
+    reader_index += packetIdIndex;
+
+    int32_t protocolVersion;
+    uint32_t protocolVersionBytes = read_varint(reader_index, end, &protocolVersion);
+    if (!protocolVersionBytes) {
+        return 0;
+    };
+    reader_index += protocolVersionBytes;
+
+    int32_t hostLen;
+    uint32_t hostLenBytes = read_varint(reader_index, end, &hostLen);
+    if (!hostLenBytes) {
+        return 0;
+    };
+
+    if (hostLen > 255 || hostLen < 1) {
+        return 0;
+    }
+
+    if (reader_index + hostLenBytes <= end) {
+        reader_index += hostLenBytes;
+        if (reader_index + hostLen <= end) {
+            reader_index += hostLen;
+            if (reader_index + 2 <= end) {
+                uint16_t port = ((uint16_t*)reader_index)[0];
+                reader_index += 2;
             } else {
                 return 0;
             }
-	    } else {
-            if (start + 1 < end) {
-                signed char packetId = *(signed char *)(start + 1); // should always be 0
-                if (packetId != 0) {
-                    // invalid packet id
-                    return 0;
-                }
-            } else {
-                return 0;
-            }
-            packetLen = byte + 1;
-            position = 2;
-	    }
-	} else {
-        return 0;
-    }
-
-    int protocol_version = 0;
-    if (start + position < end) {
-        signed char firstByte = *(signed char *)(start + position);
-        if (firstByte < 0) {
-            position = position + 1;
-            if (start + position < end) {
-                signed char secondByte = *(signed char *)(start + position);
-                if ( secondByte < 0) {
-                    // protocol took more than 2 bytes varint
-                    return 0;
-                }
-                protocol_version = (firstByte & 0x7F) | (secondByte << 7);
-            } else {
-                return 0;
-            }
-        } else {
-            protocol_version = firstByte;
-        }
-    } else {
-        return 0;
-    }
-
-
-    position = position + 1;
-    int host_len = 0;
-    if (start + position < end) {
-        signed char firstByte = *(signed char *)(start + position);
-        if (firstByte < 0) {
-            position = position + 1;
-            if (start + position < end) {
-                signed char secondByte = *(signed char *)(start + position);
-                if ( secondByte < 0) {
-                    return 0;
-                }
-                host_len = (firstByte & 0x7F) | (secondByte << 7);
-            } else {
-                return 0;
-            }
-        } else {
-            host_len = firstByte;
-        }
-    } else {
-        return 0;
-    }
-
-    if (host_len > 255 || host_len < 1) {
-        return 0;
-    }
-
-    if (size < packetLen) {
-        return 0;
-    }
-
-
-    __u8 *last_byte_ptr = start + (packetLen - 1);
-    int intention = 0;
-    if (last_byte_ptr + 1 <= end) {
-        intention = *last_byte_ptr;
-        if (intention != 1 && intention != 2 && intention != 3) {
+        }else {
             return 0;
         }
     } else {
         return 0;
     }
 
-    // this packet only contained the handshake
-    if(size == packetLen) {
-        if (intention == 1) {
-            return AWAIT_STATUS_REQUEST;
+
+    int32_t intention;
+    uint32_t intentionBytes = read_varint(reader_index, end, &intention);
+
+    // we could check if the version as state 3 (transfer) but as BungeeCord ignores it i also do so for now
+    if (!intentionBytes || (intention != 1 && intention != 2 && intention != 3)) {
+        return 0;
+    };
+    reader_index += intentionBytes;
+
+    // this packet contained exactly the handshake
+    if (reader_index == end) {
+        return intention == 1 ? AWAIT_STATUS_REQUEST : AWAIT_LOGIN;
+    } 
+    
+    if (intention == 1) {
+        // the packet also contained the staus request
+        if (inspect_status_request(reader_index, end)) {
+            return AWAIT_PING;
         }
-        return AWAIT_LOGIN;
-    } else { // more data probably after retransmition
-        if (intention == 1) {
-            last_byte_ptr = last_byte_ptr + 1;
-            if (last_byte_ptr + 2 <= end) {
-                if (inspect_status_request((void *) last_byte_ptr, data_end)) {
-                    return AWAIT_PING;
-                }
-            }
-        } else {
-            last_byte_ptr = last_byte_ptr + 1;
-            if (inspect_login_packet((void *) last_byte_ptr, data_end)) {
-                // we received login here we have to disable the filter
-                return DISABLE_FILTER;
-            }
+    } else {
+        if (inspect_login_packet(reader_index, end)) {
+            // we received login here we have to disable the filter
+            return DISABLE_FILTER;
         }
     }
 
-
-   return 0;
+    return 0;
 }
 
-static __always_inline int inspect_ping_request(void *data, void *data_end) {
-    __u8 *start = (__u8 *)data;
-    __u8 *end = (__u8 *)data_end;
-    __u32 size = end - start;
-    if (size != PING_REQUEST_LEN) return 0; 
+static __always_inline int inspect_ping_request(signed char *start, signed char *end) {
+    if (end - start != PING_REQUEST_LEN) return 0; 
 
-    if (*(signed char *)(start) != 9) { // len
+    if (start[0] != 9) { // len
         return 0;
     }
 
     if (start + 1 < end) {
-        if (*(signed char *)(start + 1) != 1) { // packet id
+        if (start[1] != 1) { // packet id
             return 0;
         }
     } 
@@ -325,7 +307,7 @@ int minecraft_filter(struct xdp_md *ctx) {
     }
 
     // Check if TCP destination port matches mc server port
-    if (tcp->dest != htons(25577)) {
+    if (tcp->dest != MINECRAFT_PORT) {
         return XDP_PASS;  // not for our service
     }
 
@@ -342,18 +324,17 @@ int minecraft_filter(struct xdp_md *ctx) {
     __u64 *lastTime = bpf_map_lookup_elem(&player_connection_map, &flow_key);
     if (lastTime != NULL) {
         __u64 now = bpf_ktime_get_ns();
-        if (*lastTime + 1000000000 < now) {
+        if (*lastTime + TIME_UPDATE < now) {
             bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
         }
         return XDP_PASS;
     }
 
 
-    __u8 *initial_connection_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
+    __u8 *initial_connection_state_pointer = bpf_map_lookup_elem(&conntrack_map, &flow_key);
     
-    if (initial_connection_state == NULL) {
+    if (initial_connection_state_pointer == NULL) {
         // No entry found: if this is not a new SYN, it's an out-of-state packet -> drop
-        
         if ((tcp->rst || tcp->fin) && !tcp ->psh) { // let them close the connection, better for us
             return XDP_PASS;
         }
@@ -365,20 +346,36 @@ int minecraft_filter(struct xdp_md *ctx) {
         } else {
             return XDP_DROP;
         }
-    } else if (*initial_connection_state == AWAIT_ACK) {
+    } 
+
+    __u8 currentState = *initial_connection_state_pointer;
+    
+    if (currentState == AWAIT_ACK) {
         if (!tcp->ack || tcp->psh) {
             return XDP_DROP;
         }
         bpf_map_update_elem(&conntrack_map, &flow_key, &AWAIT_MC_HANDSHAKE, BPF_ANY);
-	    *initial_connection_state = AWAIT_MC_HANDSHAKE;	
+	    currentState = AWAIT_MC_HANDSHAKE;	
     }
 
-    void *tcp_payload = (void *)((__u8 *)tcp + (tcp->doff * 4));
-    if (tcp_payload < data_end) { 
-        __u8 currentState = *initial_connection_state;
+    signed char *tcp_payload = (signed char *)((__u8 *)tcp + (tcp->doff * 4));
+    signed char *tcp_payload_end = (signed char *) data_end;
+
+    if (tcp_payload < tcp_payload_end) { 
         if (currentState >= AWAIT_MC_HANDSHAKE) {           
-            int nextState = inspect_handshake(tcp_payload, data_end);
-            if (nextState) {
+            int nextState = inspect_handshake(tcp_payload, tcp_payload_end);
+            if (nextState == INVALID_LEN) {
+                bpf_map_delete_elem(&conntrack_map, &flow_key);
+                #ifdef INJECT_RESET
+                    tcp->rst = 1;
+                    tcp->psh = 0;
+                    tcp->ack = 0;
+                    tcp->doff = 5;
+                    return XDP_PASS;
+                #else
+                    return XDP_DROP;
+                #endif
+            } else if (nextState) {
                 // handshake & login/status
                 if (nextState == DISABLE_FILTER) {
                     __u64 now = bpf_ktime_get_ns();
@@ -391,13 +388,20 @@ int minecraft_filter(struct xdp_md *ctx) {
                 // invalid handshake drop
                 if (++currentState > AWAIT_MC_HANDSHAKE + 3) {
                     bpf_map_delete_elem(&conntrack_map, &flow_key);
+                    #ifdef INJECT_RESET
+                        tcp->rst = 1;
+                        tcp->psh = 0;
+                        tcp->ack = 0;
+                        tcp->doff = 5;
+                        return XDP_PASS;
+                    #endif
                 } else {
                     bpf_map_update_elem(&conntrack_map, &flow_key, &currentState, BPF_ANY);    
                 }
                 return XDP_DROP;
             }   
         } else if (currentState == AWAIT_STATUS_REQUEST) {
-            if(inspect_status_request(tcp_payload, data_end)) {
+            if(inspect_status_request(tcp_payload, tcp_payload_end)) {
                 bpf_map_update_elem(&conntrack_map, &flow_key, &AWAIT_PING, BPF_ANY);
             } else {
                 bpf_map_delete_elem(&conntrack_map, &flow_key);
@@ -405,21 +409,21 @@ int minecraft_filter(struct xdp_md *ctx) {
             }
         } else if (currentState == AWAIT_PING) {
             bpf_map_delete_elem(&conntrack_map, &flow_key);
-            if(!inspect_ping_request(tcp_payload, data_end)) {
+            if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
                 return XDP_DROP;
             }
         } else if (currentState == AWAIT_LOGIN) {
             bpf_map_delete_elem(&conntrack_map, &flow_key);
-            if(!inspect_login_packet(tcp_payload, data_end)) {
+            if(!inspect_login_packet(tcp_payload, tcp_payload_end)) {
                 return XDP_DROP;
             }
             __u64 now = bpf_ktime_get_ns();
             bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
         } else {
-            bpf_printk("%d SHOULD NOT HAPPEN\n", currentState);
+           // SHOULD NOT HAPPEN
         }
     }
     return XDP_PASS;
 }
 
-char _license[] SEC("license") = "GPL";
+char _license[] SEC("license") = "Proprietary";
