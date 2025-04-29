@@ -1,6 +1,5 @@
 Minecraft-XDP-eBPF
 ==========
-# Minecraft XDP BPF Filter
 This is the first free and public available Minecraft XDP Filter
 
 # What does the filter do
