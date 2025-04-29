@@ -53,14 +53,24 @@ struct {
     __uint(max_entries, 4096);
     __type(key, __u64);   // flow 5-tuple key
     __type(value, __u8); // current state
+    //__uint(pinning, LIBBPF_PIN_BY_NAME);
 } conntrack_map SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 65535);
     __type(key, __u64);   // flow 5-tuple key
     __type(value, __u64); // last seen timestamp (ns) or state info
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } player_connection_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 65535);
+    __type(key, __u32);   // flow 5-tuple key
+    __type(value, __u64); // last seen timestamp (ns) or state info
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} blocked_ips SEC(".maps");
 
 
 // Parse TCP header (returns NULL if out-of-bounds)
@@ -310,10 +320,17 @@ int minecraft_filter(struct xdp_md *ctx) {
     }
 
     __u32 src_ip = ip->saddr;
-    __u32 dst_ip = ip->daddr;
+    // __u32 dst_ip = ip->daddr;
 
     // Compute flow key for TCP connection
     __u64 flow_key = generate_flow_key(src_ip, tcp->source, tcp->dest);
+
+    __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
+    if (blocked != NULL) {
+        return XDP_DROP;
+    }
+
+
     __u64 *lastTime = bpf_map_lookup_elem(&player_connection_map, &flow_key);
     if (lastTime != NULL) {
         __u64 now = bpf_ktime_get_ns();
@@ -359,6 +376,8 @@ int minecraft_filter(struct xdp_md *ctx) {
         if (tcp_payload < tcp_payload_end) {
 
             if (!tcp->psh || !tcp->ack) {
+                __u64 now = bpf_ktime_get_ns();
+                bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
                 bpf_map_delete_elem(&conntrack_map, &flow_key);
                 #ifdef INJECT_RESET
                     tcp->rst = 1;
@@ -377,6 +396,8 @@ int minecraft_filter(struct xdp_md *ctx) {
                 // even with retransmition this len should always be valid‚
                 if (nextState == INVALID_LEN) {
                     bpf_printk("invalid len\n");
+                    __u64 now = bpf_ktime_get_ns();
+                    bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
                     bpf_map_delete_elem(&conntrack_map, &flow_key);
                     #ifdef INJECT_RESET
                         tcp->rst = 1;
@@ -400,6 +421,8 @@ int minecraft_filter(struct xdp_md *ctx) {
                 } else {
                     // invalid handshake drop
                     if (++currentState > AWAIT_MC_HANDSHAKE + 3) {
+                        __u64 now = bpf_ktime_get_ns();
+                        bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
                         bpf_map_delete_elem(&conntrack_map, &flow_key);
                         #ifdef INJECT_RESET
                             tcp->rst = 1;
