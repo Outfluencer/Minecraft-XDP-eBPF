@@ -1,9 +1,15 @@
+Minecraft-XDP-eBPF
+==========
 # Minecraft XDP BPF Filter
-
 This is the first free and public available Minecraft XDP Filter
 
-# Why
+# What does the filter do
+The filter analyses Minecraft handshakes, status, ping and login requests. And drops invalid connections if detected.
 
+# Pull Request
+Any kind of pull request that improves the filter is very welcome.
+
+# Why
 Minecraft servers are frequent targets of distributed denial-of-service (DDoS) attacks,
 ranging from high-volume packet floods to application-layer attacks targeting handshake and login mechanisms.
 Traditional mitigation approaches, such as iptables or userspace firewalls,
