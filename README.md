@@ -17,3 +17,5 @@ often introduce significant latency and consume excessive CPU resources, degradi
 XDP (eXpress Data Path) combined with eBPF (extended Berkeley Packet Filter) offers a highly effective,
 low-latency solution for DDoS protection at the kernel level, mitigating attacks before they can impact
 application performance. 
+
+⭐ Don't forget to star the project! ⭐
