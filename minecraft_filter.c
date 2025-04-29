@@ -10,7 +10,7 @@
 #define htons(x) ((uint16_t)((((x) & 0xff00) >> 8) | (((x) & 0x00ff) << 8)))
 
 // Minecraft server port
-const uint16_t MINECRAFT_PORT = htons(25565);
+const uint16_t MINECRAFT_PORT = htons(25577);
 
 // lru map update delay for connection tracking
 const __u64 TIME_UPDATE = 1000000000;
@@ -64,23 +64,19 @@ struct {
 
 
 // Parse TCP header (returns NULL if out-of-bounds)
-static __always_inline struct tcphdr *parse_tcp(void *data, void *data_end, struct iphdr *ip) {
+static __always_inline struct tcphdr *parse_tcp(void *data_end, struct iphdr *ip) {
     struct tcphdr *tcp = (struct tcphdr *)((__u8 *)ip + sizeof(struct iphdr));
     if ((void *)(tcp + 1) > data_end) {
         return NULL; // Packet not large enough for TCP header
     }
     return tcp;
 }
-
-// Generate a 64-bit flow key from 5-tuple (src/dst IPs and ports, protocol)
-static __always_inline __u64 generate_flow_key(__u32 src_ip, __u32 dst_ip, __u16 src_port, __u16 dst_port, __u8 protocol) {
-    // Combine into 64 bits: 32 bits of src_ip, 16 bits of src_port, 8 bits of proto, 8 bits of dst_port (low 8 bits)
-    // This is a simple combination; it should uniquely identify flows in this context.
+// our key consists of src ip port and dst port
+static __always_inline __u64 generate_flow_key(__u32 src_ip, __u16 src_port, __u16 dst_port) {
     __u64 key = 0;
     key |= (__u64)src_ip << 32;
     key |= (__u64)src_port << 16;
-    key |= (__u64)protocol << 8;
-    key |= (__u64)(dst_port & 0xFF);
+    key |= (__u64)dst_port;
     return key;
 }
 
@@ -88,11 +84,8 @@ static __always_inline __u64 generate_flow_key(__u32 src_ip, __u32 dst_ip, __u16
 static __always_inline int detect_tcp_bypass(struct tcphdr *tcp) {
     // Drop any packet with no control flags (NULL scan) or an unsolicited SYN-ACK
     if ((!tcp->syn && !tcp->ack && !tcp->fin && !tcp->rst) ||   // no SYN/ACK/FIN/RST flag
-        (tcp->syn && tcp->ack)) {                               // SYN+ACK from external (unexpected)
-        return 1;  // suspected bypass/scanning packet
-    }
-    // Drop if URG flag is set (rarely legitimate, often used in attacks to evade filters)
-    if (tcp->urg) {
+        (tcp->syn && tcp->ack) || // SYN+ACK from external (unexpected)
+         tcp->urg) { // Drop if URG flag is set (rarely legitimate, often used in attacks to evade filters)                          
         return 1;
     }
     return 0;
@@ -301,7 +294,7 @@ int minecraft_filter(struct xdp_md *ctx) {
 
     // Prepare a flow key for tracking (we'll fill it based on protocol below)
     // Parse TCP header
-    struct tcphdr *tcp = parse_tcp(data, data_end, ip);
+    struct tcphdr *tcp = parse_tcp(data_end, ip);
     if (!tcp) {
         return XDP_ABORTED;
     }
@@ -320,7 +313,7 @@ int minecraft_filter(struct xdp_md *ctx) {
     __u32 dst_ip = ip->daddr;
 
     // Compute flow key for TCP connection
-    __u64 flow_key = generate_flow_key(src_ip, dst_ip, tcp->source, tcp->dest, IPPROTO_TCP);
+    __u64 flow_key = generate_flow_key(src_ip, tcp->source, tcp->dest);
     __u64 *lastTime = bpf_map_lookup_elem(&player_connection_map, &flow_key);
     if (lastTime != NULL) {
         __u64 now = bpf_ktime_get_ns();
@@ -334,37 +327,38 @@ int minecraft_filter(struct xdp_md *ctx) {
     __u8 *initial_connection_state_pointer = bpf_map_lookup_elem(&conntrack_map, &flow_key);
     
     if (initial_connection_state_pointer == NULL) {
-        // No entry found: if this is not a new SYN, it's an out-of-state packet -> drop
-        if ((tcp->rst || tcp->fin) && !tcp ->psh) { // let them close the connection, better for us
+        if ((tcp->rst || tcp->fin) && !tcp->psh) { // let them close the connection, better for us
             return XDP_PASS;
         }
-
-        if (tcp->syn && !tcp->ack) {
-            // Otherwise, it's a valid new SYN, create a new flow entry
+        if (tcp->syn) { // only check for syn flag here, we have checked abnormal flags in detect_tcp_bypass
+            // it's a valid new SYN, create a new flow entry
             bpf_map_update_elem(&conntrack_map, &flow_key, &AWAIT_ACK, BPF_ANY);
             return XDP_PASS;
-        } else {
-            return XDP_DROP;
         }
+        // if this is not a new SYN, it is out-of-state
+        return XDP_DROP;
     } 
 
     __u8 currentState = *initial_connection_state_pointer;
     
     if (currentState == AWAIT_ACK) {
-        if (!tcp->ack || tcp->psh) {
+        if (tcp->ack) {
+            bpf_map_update_elem(&conntrack_map, &flow_key, &AWAIT_MC_HANDSHAKE, BPF_ANY);
+            currentState = AWAIT_MC_HANDSHAKE;
+        } else {
             return XDP_DROP;
         }
-        bpf_map_update_elem(&conntrack_map, &flow_key, &AWAIT_MC_HANDSHAKE, BPF_ANY);
-	    currentState = AWAIT_MC_HANDSHAKE;	
     }
 
-    signed char *tcp_payload = (signed char *)((__u8 *)tcp + (tcp->doff * 4));
-    signed char *tcp_payload_end = (signed char *) data_end;
 
-    if (tcp_payload < tcp_payload_end) { 
-        if (currentState >= AWAIT_MC_HANDSHAKE) {           
-            int nextState = inspect_handshake(tcp_payload, tcp_payload_end);
-            if (nextState == INVALID_LEN) {
+        bpf_printk("psh ack\n");
+
+        signed char *tcp_payload = (signed char *)((__u8 *)tcp + (tcp->doff * 4));
+        signed char *tcp_payload_end = (signed char *) data_end;
+    
+        if (tcp_payload < tcp_payload_end) {
+
+            if (!tcp->psh || !tcp->ack) {
                 bpf_map_delete_elem(&conntrack_map, &flow_key);
                 #ifdef INJECT_RESET
                     tcp->rst = 1;
@@ -375,18 +369,14 @@ int minecraft_filter(struct xdp_md *ctx) {
                 #else
                     return XDP_DROP;
                 #endif
-            } else if (nextState) {
-                // handshake & login/status
-                if (nextState == DISABLE_FILTER) {
-                    __u64 now = bpf_ktime_get_ns();
-                    bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
-                    bpf_map_delete_elem(&conntrack_map, &flow_key);
-                } else {
-                    bpf_map_update_elem(&conntrack_map, &flow_key, &nextState, BPF_ANY);
-                }
-            } else {
-                // invalid handshake drop
-                if (++currentState > AWAIT_MC_HANDSHAKE + 3) {
+            }
+            bpf_printk("tcp_payload < tcp_payload_end %d \n", currentState);
+            if (currentState >= AWAIT_MC_HANDSHAKE) {           
+                int nextState = inspect_handshake(tcp_payload, tcp_payload_end);
+                // if the first packet has invalid length, we can block it
+                // even with retransmition this len should always be valid‚
+                if (nextState == INVALID_LEN) {
+                    bpf_printk("invalid len\n");
                     bpf_map_delete_elem(&conntrack_map, &flow_key);
                     #ifdef INJECT_RESET
                         tcp->rst = 1;
@@ -394,36 +384,68 @@ int minecraft_filter(struct xdp_md *ctx) {
                         tcp->ack = 0;
                         tcp->doff = 5;
                         return XDP_PASS;
+                    #else
+                        return XDP_DROP;
                     #endif
+                } else if (nextState) {
+                    bpf_printk("valid!");
+                    // handshake & login/status
+                    if (nextState == DISABLE_FILTER) {
+                        __u64 now = bpf_ktime_get_ns();
+                        bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
+                        bpf_map_delete_elem(&conntrack_map, &flow_key);
+                    } else {
+                        bpf_map_update_elem(&conntrack_map, &flow_key, &nextState, BPF_ANY);
+                    }
                 } else {
-                    bpf_map_update_elem(&conntrack_map, &flow_key, &currentState, BPF_ANY);    
+                    // invalid handshake drop
+                    if (++currentState > AWAIT_MC_HANDSHAKE + 3) {
+                        bpf_map_delete_elem(&conntrack_map, &flow_key);
+                        #ifdef INJECT_RESET
+                            tcp->rst = 1;
+                            tcp->psh = 0;
+                            tcp->ack = 0;
+                            tcp->doff = 5;
+                            return XDP_PASS;
+                        #else
+                            return XDP_DROP;
+                        #endif
+                    } else {
+                        // allow a bit of retransmission, here it happens sometimes
+                        bpf_map_update_elem(&conntrack_map, &flow_key, &currentState, BPF_ANY);    
+                    }
+                    return XDP_DROP;
+                }   
+            } else if (currentState == AWAIT_STATUS_REQUEST) {
+                bpf_printk("status request\n");
+                if(inspect_status_request(tcp_payload, tcp_payload_end)) {
+                    bpf_map_update_elem(&conntrack_map, &flow_key, &AWAIT_PING, BPF_ANY);
+                } else {
+                    bpf_map_delete_elem(&conntrack_map, &flow_key);
+                    return XDP_DROP;
                 }
-                return XDP_DROP;
-            }   
-        } else if (currentState == AWAIT_STATUS_REQUEST) {
-            if(inspect_status_request(tcp_payload, tcp_payload_end)) {
-                bpf_map_update_elem(&conntrack_map, &flow_key, &AWAIT_PING, BPF_ANY);
-            } else {
+            } else if (currentState == AWAIT_PING) {
+                bpf_printk("ping request\n");
                 bpf_map_delete_elem(&conntrack_map, &flow_key);
-                return XDP_DROP;
+                if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
+                    return XDP_DROP;
+                }
+            } else if (currentState == AWAIT_LOGIN) {
+                bpf_printk("login request\n");
+                bpf_map_delete_elem(&conntrack_map, &flow_key);
+                if(!inspect_login_packet(tcp_payload, tcp_payload_end)) {
+                    return XDP_DROP;
+                }
+                __u64 now = bpf_ktime_get_ns();
+                bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
+            } else {
+                bpf_printk("NAHHHH\n");
             }
-        } else if (currentState == AWAIT_PING) {
-            bpf_map_delete_elem(&conntrack_map, &flow_key);
-            if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
-                return XDP_DROP;
-            }
-        } else if (currentState == AWAIT_LOGIN) {
-            bpf_map_delete_elem(&conntrack_map, &flow_key);
-            if(!inspect_login_packet(tcp_payload, tcp_payload_end)) {
-                return XDP_DROP;
-            }
-            __u64 now = bpf_ktime_get_ns();
-            bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
-        } else {
-           // SHOULD NOT HAPPEN
         }
-    }
+
+    
     return XDP_PASS;
 }
 
-char _license[] SEC("license") = "Proprietary";
+//char _license[] SEC("license") = "Proprietary";
+char _license[] SEC("license") = "GPL";
