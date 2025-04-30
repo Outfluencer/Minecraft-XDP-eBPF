@@ -4,10 +4,10 @@ This is the first free and public available Minecraft XDP filter written in pure
 
 Currently the filter is only available for ipv4.
 
-The default port the filter is filtering for is 25565.
+The default port for filtering is 25565.
 
 # What does the filter do
-The filter analyses Minecraft handshakes, status, ping and login requests. And drops invalid connections if detected.
+The filter analyses Minecraft handshakes, status, ping and login requests, and drops invalid connections if detected.
 If a connection is dropped, the ip will also be blacklisted for 60 seconds, so all new syn's will be dropped.
 
 # How to install
