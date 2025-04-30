@@ -10,7 +10,16 @@ The default port the filter is filtering for is 25565.
 The filter analyses Minecraft handshakes, status, ping and login requests. And drops invalid connections if detected.
 If a connection is dropped, the ip will also be blacklisted for 60 seconds, so all new syn's will be dropped.
 
+# How to install
+Download the latest release from the release tab or compile the xdp_loader yourself. And run the ./xdp_loader. You can also run it in a screen.
+
 # Compilation requirements
 `sudo apt update && sudo apt install -y clang xxd gcc-multilib libbpf-dev libxdp-dev`
+
+# Compilation
+`git clone https://github.com/Outfluencer/Minecraft-XDP-eBPF.git`
+`cd Minecraft-XDP-eBPF`
+`chmod 777 build.sh`
+`./build.sh`
 
 ⭐ Don't forget to star the project!
