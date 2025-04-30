@@ -17,21 +17,15 @@ const __u64 TIME_UPDATE = 1000000000;
 
 // Definitions
 // if defined signatures in login payloads are allowed (needed for 1.19 - 1.19.3 login)
-// #define SIGNATURE_LOGIN
 // if defines send a rst to the protected server to force close the connection.
 #define INJECT_RESET
-
-#ifdef SIGNATURE_LOGIN
-    const int MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2;
-#else
-    const int MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 16;    
-#endif
 
 // PACKET LEN - PACKET ID - DATA
 const int MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
 const int MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
 const int MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
 const int PING_REQUEST_LEN = 10; // drop empty names instantly
+const int MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
 
 
 // return code to indicate invalid packet length
@@ -168,19 +162,131 @@ static __always_inline int inspect_status_request(signed char *start, signed cha
 }
 
 // Check for valid login request packet
+// see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
 static __always_inline int inspect_login_packet(signed char *start, signed char *end, int protocol_version) {
     __u32 size = end - start;
     if (size < MIN_LOGIN_LEN || size > MAX_LOGIN_LEN) return 0; 
-    #ifndef SIGNATURE_LOGIN
-        if (start + 2 <= end) { // second byte is packet id;
-            if (start[1] != 0) { // packet id musst be 0;
-                return 0;
-            }
-        } 
-    #endif
 
-    bpf_printk("%i VERSION\n", protocol_version);
-    return 1;
+    signed char *reader_index = start;
+    int32_t packet_len;
+    uint32_t packet_len_bytes = read_varint_sized(start, end, &packet_len, 2);
+    if (!packet_len_bytes || packet_len > MAX_LOGIN_LEN) {
+        return 0;
+    };
+    reader_index += packet_len_bytes;
+
+    int32_t packet_id;
+    uint32_t packet_id_bytes = read_varint_sized(reader_index, end, &packet_id, 1);
+    if (!packet_id_bytes || packet_id != 0x00) {
+        return 0;
+    };
+    reader_index += packet_id_bytes;
+
+    int32_t name_len;
+    uint32_t name_len_bytes = read_varint_sized(reader_index, end, &name_len, 2);
+    if (!name_len_bytes) {
+        return 0;
+    };
+    if (name_len > 16 * 3 || name_len < 1) {
+        return 0;
+    }
+
+    if (reader_index + name_len_bytes <= end) {
+        reader_index += name_len_bytes;
+        if (reader_index + name_len <= end) {
+            reader_index += name_len;
+            // 1_19                                          1_19_3
+            if (protocol_version >= 759 && protocol_version < 761) {
+                if (reader_index + 1 <= end) {
+                    char has_public_key = reader_index[0];
+                    reader_index++;
+                    if (has_public_key) {
+                        if (reader_index + 8 <= end) {
+                            reader_index += 8; // skip expiry time
+                            int32_t key_len;
+                            uint32_t key_len_bytes = read_varint_sized(reader_index, end, &key_len, 2);
+
+                            // i hate this bpf verfier );, we can't merge this if's together
+                            if (!key_len_bytes) {
+                                return 0;
+                            };
+                            if (key_len < 0 || key_len > 512) {
+                                return 0;
+                            }
+    
+                            if (reader_index + key_len_bytes <= end) {
+                                reader_index += key_len_bytes;
+                                if (key_len >= 0 && reader_index + key_len <= end) {
+                                    reader_index += key_len;
+                                    int32_t signaturey_len;
+                                    uint32_t signaturey_len_bytes = read_varint_sized(reader_index, end, &signaturey_len, 2);
+
+                                    // i hate this bpf verfier );, we can't merge this if's together
+                                    if (!signaturey_len_bytes) {
+                                        return 0;
+                                    };
+                                    if (signaturey_len < 0 || signaturey_len > 4096) {
+                                        return 0;
+                                    }
+                                    
+                                    if (reader_index + signaturey_len_bytes <= end) {
+                                        reader_index += signaturey_len_bytes;
+                                        if (reader_index + signaturey_len <= end) {
+                                            reader_index += signaturey_len;
+                                        }
+                                    } else {
+                                        return 0;
+                                    }
+                                }else {
+                                    return 0;
+                                }
+                            } else {
+                                return 0;
+                            }
+                        } else {
+                            return 0;
+                        }
+                    }
+                } else {
+                    return 0;
+                }
+            }
+            //  1_19_1
+            if (protocol_version >= 760) {
+                // 1_20_2
+                if (protocol_version >= 764) {
+                    // check space for uuid
+                    if (reader_index + 16 <= end) {
+                        reader_index += 16;
+                    } else {
+                        return 0;
+                    }
+                } else {
+                    // check space for uuid and boolean
+                    if (reader_index + 1 <= end) {
+                        char has_uuid = reader_index[0];
+                        reader_index++;
+                        if(has_uuid) {
+                            if (reader_index + 16 <= end) {
+                                reader_index += 16;
+                            } else {
+                                return 0;
+                            }
+                        }
+                    } else {
+                        return 0;
+                    }
+                }
+            }
+        }else {
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+
+    // no data left to read, this is a valid login packet
+    return reader_index == end;
 }
 
 
@@ -188,6 +294,7 @@ static __always_inline int inspect_login_packet(signed char *start, signed char 
 // Note: it happens that the handshake and login or status request are in the same packet, 
 // so we have to check for both cases here.
 // this can also happen after retransmition.
+// see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
 static int inspect_handshake(signed char *start, signed char *end, int *protocol_version) {
 
     __u32 size = end - start;
@@ -196,42 +303,40 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
     }
 
     signed char *reader_index = start;
-    int32_t packetLen;
-    uint32_t position = read_varint(start, end, &packetLen);
-    if (!position) {
+    int32_t packet_len;
+    uint32_t packet_len_bytes = read_varint_sized(start, end, &packet_len, 2);
+    if (!packet_len_bytes || packet_len > MAX_HANDSHAKE_LEN) {
         return 0;
     };
-    reader_index += position;
+    reader_index += packet_len_bytes;
 
-    int32_t packetId;
-    uint32_t packetIdIndex = read_varint(reader_index, end, &packetId);
-    if (!packetIdIndex) {
+    int32_t packet_id;
+    uint32_t packet_id_bytes = read_varint_sized(reader_index, end, &packet_id, 1);
+    if (!packet_id_bytes || packet_id != 0x00) {
         return 0;
     };
-    reader_index += packetIdIndex;
+    reader_index += packet_id_bytes;
 
-    int32_t protocolVersion;
-    uint32_t protocolVersionBytes = read_varint(reader_index, end, &protocolVersion);
-    if (!protocolVersionBytes) {
+    uint32_t protocol_version_bytes = read_varint_sized(reader_index, end, protocol_version, 5);
+    if (!protocol_version_bytes || *protocol_version < 47) {
         return 0;
     };
-    *protocol_version = protocolVersion;
-    reader_index += protocolVersionBytes;
+    reader_index += protocol_version_bytes;
 
-    int32_t hostLen;
-    uint32_t hostLenBytes = read_varint(reader_index, end, &hostLen);
-    if (!hostLenBytes) {
+    int32_t host_len;
+    uint32_t host_len_bytes = read_varint_sized(reader_index, end, &host_len, 2);
+    if (!host_len_bytes) {
         return 0;
     };
 
-    if (hostLen > 255 || hostLen < 1) {
+    if (host_len > 255 * 3 || host_len < 1) {
         return 0;
     }
 
-    if (reader_index + hostLenBytes <= end) {
-        reader_index += hostLenBytes;
-        if (reader_index + hostLen <= end) {
-            reader_index += hostLen;
+    if (reader_index + host_len_bytes <= end) {
+        reader_index += host_len_bytes;
+        if (reader_index + host_len <= end) {
+            reader_index += host_len;
             if (reader_index + 2 <= end) {
                 uint16_t port = ((uint16_t*)reader_index)[0];
                 reader_index += 2;
@@ -247,13 +352,13 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
 
 
     int32_t intention;
-    uint32_t intentionBytes = read_varint(reader_index, end, &intention);
+    uint32_t intention_bytes = read_varint_sized(reader_index, end, &intention, 1);
 
     // we could check if the version as state 3 (transfer) but as BungeeCord ignores it i also do so for now
-    if (!intentionBytes || (intention != 1 && intention != 2 && intention != 3)) {
+    if (!intention_bytes || (intention != 1 && intention != 2 && (*protocol_version >= 766 ? intention != 3 : 1))) {
         return 0;
     };
-    reader_index += intentionBytes;
+    reader_index += intention_bytes;
 
     // this packet contained exactly the handshake
     if (reader_index == end) {
@@ -266,7 +371,7 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
             return AWAIT_PING;
         }
     } else {
-        if (inspect_login_packet(reader_index, end, protocolVersion)) {
+        if (inspect_login_packet(reader_index, end, *protocol_version)) {
             // we received login here we have to disable the filter
             return DISABLE_FILTER;
         }
@@ -383,15 +488,31 @@ int minecraft_filter(struct xdp_md *ctx) {
         }
     }
 
+    signed char *tcp_payload = (signed char *)((__u8 *)tcp + (tcp->doff * 4));
+    signed char *tcp_payload_end = (signed char *) data_end;
 
-        bpf_printk("psh ack\n");
+    if (tcp_payload < tcp_payload_end) {
 
-        signed char *tcp_payload = (signed char *)((__u8 *)tcp + (tcp->doff * 4));
-        signed char *tcp_payload_end = (signed char *) data_end;
-    
-        if (tcp_payload < tcp_payload_end) {
-
-            if (!tcp->psh || !tcp->ack) {
+        if (!tcp->psh || !tcp->ack) {
+            __u64 now = bpf_ktime_get_ns();
+            bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
+            bpf_map_delete_elem(&conntrack_map, &flow_key);
+            #ifdef INJECT_RESET
+                tcp->rst = 1;
+                tcp->psh = 0;
+                tcp->ack = 0;
+                tcp->doff = 5;
+                return XDP_PASS;
+            #else
+                return XDP_DROP;
+            #endif
+        }
+        if (currentState >= AWAIT_MC_HANDSHAKE) {
+            int protocol_version = 0;
+            int nextState = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version);
+            // if the first packet has invalid length, we can block it
+            // even with retransmition this len should always be valid‚
+            if (nextState == INVALID_LEN) {
                 __u64 now = bpf_ktime_get_ns();
                 bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
                 bpf_map_delete_elem(&conntrack_map, &flow_key);
@@ -404,15 +525,19 @@ int minecraft_filter(struct xdp_md *ctx) {
                 #else
                     return XDP_DROP;
                 #endif
-            }
-            bpf_printk("tcp_payload < tcp_payload_end %d \n", currentState);
-            if (currentState >= AWAIT_MC_HANDSHAKE) {
-                int protocol_version = 0;
-                int nextState = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version);
-                // if the first packet has invalid length, we can block it
-                // even with retransmition this len should always be valid‚
-                if (nextState == INVALID_LEN) {
-                    bpf_printk("invalid len\n");
+            } else if (nextState) {
+                // handshake & login/status
+                if (nextState == DISABLE_FILTER) {
+                    __u64 now = bpf_ktime_get_ns();
+                    bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
+                    bpf_map_delete_elem(&conntrack_map, &flow_key);
+                } else {
+                    __u32 new_state = generate_state_and_protocol_value(nextState, protocol_version);
+                    bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
+                }
+            } else {
+                // invalid handshake drop
+                if (++currentState > AWAIT_MC_HANDSHAKE + 3) {
                     __u64 now = bpf_ktime_get_ns();
                     bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
                     bpf_map_delete_elem(&conntrack_map, &flow_key);
@@ -425,72 +550,42 @@ int minecraft_filter(struct xdp_md *ctx) {
                     #else
                         return XDP_DROP;
                     #endif
-                } else if (nextState) {
-                    bpf_printk("valid!");
-                    // handshake & login/status
-                    if (nextState == DISABLE_FILTER) {
-                        __u64 now = bpf_ktime_get_ns();
-                        bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
-                        bpf_map_delete_elem(&conntrack_map, &flow_key);
-                    } else {
-                        __u32 new_state = generate_state_and_protocol_value(nextState, protocol_version);
-                        bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
-                    }
                 } else {
-                    // invalid handshake drop
-                    if (++currentState > AWAIT_MC_HANDSHAKE + 3) {
-                        __u64 now = bpf_ktime_get_ns();
-                        bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
-                        bpf_map_delete_elem(&conntrack_map, &flow_key);
-                        #ifdef INJECT_RESET
-                            tcp->rst = 1;
-                            tcp->psh = 0;
-                            tcp->ack = 0;
-                            tcp->doff = 5;
-                            return XDP_PASS;
-                        #else
-                            return XDP_DROP;
-                        #endif
-                    } else {
-                        // allow a bit of retransmission, here it happens sometimes
-                        __u32 new_state = generate_state_and_protocol_value(currentState, 0);
-                        bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);    
-                    }
-                    return XDP_DROP;
-                }   
-            } else if (currentState == AWAIT_STATUS_REQUEST) {
-                bpf_printk("status request\n");
-                if(inspect_status_request(tcp_payload, tcp_payload_end)) {
-                    int protocol_version = get_protocol_version(*initial_connection_state_pointer);
-                    __u32 new_state = generate_state_and_protocol_value(AWAIT_PING, protocol_version);
-                    bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
-                } else {
-                    bpf_map_delete_elem(&conntrack_map, &flow_key);
-                    return XDP_DROP;
+                    // allow a bit of retransmission, here it happens sometimes
+                    __u32 new_state = generate_state_and_protocol_value(currentState, 0);
+                    bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);    
                 }
-            } else if (currentState == AWAIT_PING) {
-                bpf_printk("ping request\n");
-                bpf_map_delete_elem(&conntrack_map, &flow_key);
-                if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
-                    return XDP_DROP;
-                }
-            } else if (currentState == AWAIT_LOGIN) {
-                bpf_printk("login request\n");
-                bpf_map_delete_elem(&conntrack_map, &flow_key);
+                return XDP_DROP;
+            }   
+        } else if (currentState == AWAIT_STATUS_REQUEST) {
+            if(inspect_status_request(tcp_payload, tcp_payload_end)) {
                 int protocol_version = get_protocol_version(*initial_connection_state_pointer);
-                if(!inspect_login_packet(tcp_payload, tcp_payload_end, protocol_version)) {
-                    return XDP_DROP;
-                }
-                __u64 now = bpf_ktime_get_ns();
-                bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
+                __u32 new_state = generate_state_and_protocol_value(AWAIT_PING, protocol_version);
+                bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
             } else {
-                bpf_printk("NAHHHH\n");
+                bpf_map_delete_elem(&conntrack_map, &flow_key);
+                return XDP_DROP;
             }
+        } else if (currentState == AWAIT_PING) {
+            bpf_map_delete_elem(&conntrack_map, &flow_key);
+            if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
+                return XDP_DROP;
+            }
+        } else if (currentState == AWAIT_LOGIN) {
+            bpf_map_delete_elem(&conntrack_map, &flow_key);
+            int protocol_version = get_protocol_version(*initial_connection_state_pointer);
+            if(!inspect_login_packet(tcp_payload, tcp_payload_end, protocol_version)) {
+                return XDP_DROP;
+            }
+            __u64 now = bpf_ktime_get_ns();
+            bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
+        } else {
+            //bpf_printk("should never happen\n");
         }
+    }
 
     
     return XDP_PASS;
 }
 
-//char _license[] SEC("license") = "Proprietary";
-char _license[] SEC("license") = "GPL";
+char _license[] SEC("license") = "Proprietary";

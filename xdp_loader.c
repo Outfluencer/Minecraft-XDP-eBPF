@@ -90,6 +90,8 @@ int main(int argc, char **argv)
     printf("blocked_ips_map_fd: %i\n", blocked_ips_map_fd);
 
     while(1) {
+        // Get the current time in nanoseconds since boot
+        // the bpf nano time works the same
         struct timespec ts;
         clock_gettime(CLOCK_BOOTTIME, &ts);
         uint64_t now = (uint64_t)ts.tv_sec * 1000000000L + ts.tv_nsec;
@@ -102,7 +104,7 @@ int main(int argc, char **argv)
             printf("start removing old connections\n");
             while (bpf_map_get_next_key(connection_map_fd, &key, &next_key) == 0) {
                 if (bpf_map_lookup_elem(connection_map_fd, &next_key, &last_connection_update) == 0) {
-                    /// timed out
+                    // timed out
                     if (last_connection_update + ( 1000000000L * 45 ) < now ) {
                         removed_count++;
                         bpf_map_delete_elem(connection_map_fd, &next_key);
@@ -124,7 +126,7 @@ int main(int argc, char **argv)
             printf("start removing old connection blocks\n");
             while (bpf_map_get_next_key(blocked_ips_map_fd, &key, &next_key) == 0) {
                 if (bpf_map_lookup_elem(blocked_ips_map_fd, &next_key, &block_time) == 0) {
-                    /// timed out
+                    // remove block
                     if (block_time + ( 1000000000L * 60 ) < now ) {
                         removed_count++;
                         bpf_map_delete_elem(blocked_ips_map_fd, &next_key);
