@@ -27,9 +27,6 @@ const int MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
 const int PING_REQUEST_LEN = 10; // drop empty names instantly
 const int MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
 
-
-// return code to indicate invalid packet length
-const int INVALID_LEN = 200;
 // return code to disable the filter for the connection
 const int DISABLE_FILTER = 1000;
 
@@ -38,6 +35,7 @@ const __u8 AWAIT_ACK = 1;
 const __u8 AWAIT_STATUS_REQUEST = 3;
 const __u8 AWAIT_LOGIN = 4;
 const __u8 AWAIT_PING = 5;
+const __u8 PING_COMPLETE = 5;
 const __u8 AWAIT_MC_HANDSHAKE = 10; // counting this higher is alowed for counting invalid packets
 
 // 7 bit state & 25 bit protocol version 
@@ -299,7 +297,7 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
 
     __u32 size = end - start;
     if (size > MAX_HANDSHAKE_LEN + MAX_LOGIN_LEN || size < MIN_HANDSHAKE_LEN) {
-        return INVALID_LEN;
+        return 0;
     }
 
     signed char *reader_index = start;
@@ -491,9 +489,11 @@ int minecraft_filter(struct xdp_md *ctx) {
     signed char *tcp_payload = (signed char *)((__u8 *)tcp + (tcp->doff * 4));
     signed char *tcp_payload_end = (signed char *) data_end;
 
+
     if (tcp_payload < tcp_payload_end) {
 
         if (!tcp->psh || !tcp->ack) {
+            // bpf_printk("not push-ack\n");
             __u64 now = bpf_ktime_get_ns();
             bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
             bpf_map_delete_elem(&conntrack_map, &flow_key);
@@ -512,20 +512,7 @@ int minecraft_filter(struct xdp_md *ctx) {
             int nextState = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version);
             // if the first packet has invalid length, we can block it
             // even with retransmition this len should always be valid‚
-            if (nextState == INVALID_LEN) {
-                __u64 now = bpf_ktime_get_ns();
-                bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
-                bpf_map_delete_elem(&conntrack_map, &flow_key);
-                #ifdef INJECT_RESET
-                    tcp->rst = 1;
-                    tcp->psh = 0;
-                    tcp->ack = 0;
-                    tcp->doff = 5;
-                    return XDP_PASS;
-                #else
-                    return XDP_DROP;
-                #endif
-            } else if (nextState) {
+            if (nextState) {
                 // handshake & login/status
                 if (nextState == DISABLE_FILTER) {
                     __u64 now = bpf_ktime_get_ns();
@@ -538,6 +525,7 @@ int minecraft_filter(struct xdp_md *ctx) {
             } else {
                 // invalid handshake drop
                 if (++currentState > AWAIT_MC_HANDSHAKE + 3) {
+                    // bpf_printk("!invalid handshake\n");
                     __u64 now = bpf_ktime_get_ns();
                     bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
                     bpf_map_delete_elem(&conntrack_map, &flow_key);
@@ -563,28 +551,70 @@ int minecraft_filter(struct xdp_md *ctx) {
                 __u32 new_state = generate_state_and_protocol_value(AWAIT_PING, protocol_version);
                 bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
             } else {
+                // bpf_printk("!inspect_status_request\n");
+                __u64 now = bpf_ktime_get_ns();
+                bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
                 bpf_map_delete_elem(&conntrack_map, &flow_key);
-                return XDP_DROP;
+                #ifdef INJECT_RESET
+                    tcp->rst = 1;
+                    tcp->psh = 0;
+                    tcp->ack = 0;
+                    tcp->doff = 5;
+                    return XDP_PASS;
+                #else
+                    return XDP_DROP;
+                #endif
             }
         } else if (currentState == AWAIT_PING) {
-            bpf_map_delete_elem(&conntrack_map, &flow_key);
             if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
-                return XDP_DROP;
+                // bpf_printk("!inspect_ping_request\n");
+                __u64 now = bpf_ktime_get_ns();
+                bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
+                bpf_map_delete_elem(&conntrack_map, &flow_key);
+                #ifdef INJECT_RESET
+                    tcp->rst = 1;
+                    tcp->psh = 0;
+                    tcp->ack = 0;
+                    tcp->doff = 5;
+                    return XDP_PASS;
+                #else
+                    return XDP_DROP;
+                #endif
             }
+            int protocol_version = get_protocol_version(*initial_connection_state_pointer);
+            __u32 new_state = generate_state_and_protocol_value(PING_COMPLETE, protocol_version);
+            bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
         } else if (currentState == AWAIT_LOGIN) {
             bpf_map_delete_elem(&conntrack_map, &flow_key);
             int protocol_version = get_protocol_version(*initial_connection_state_pointer);
             if(!inspect_login_packet(tcp_payload, tcp_payload_end, protocol_version)) {
-                return XDP_DROP;
+                // bpf_printk("!inspect_login_packet\n");
+                __u64 now = bpf_ktime_get_ns();
+                bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
+                bpf_map_delete_elem(&conntrack_map, &flow_key);
+                #ifdef INJECT_RESET
+                    tcp->rst = 1;
+                    tcp->psh = 0;
+                    tcp->ack = 0;
+                    tcp->doff = 5;
+                    return XDP_PASS;
+                #else
+                    return XDP_DROP;
+                #endif
             }
             __u64 now = bpf_ktime_get_ns();
             bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
+        } else if (currentState == PING_COMPLETE) {
+            // bpf_printk("received invalid data after ping request\n");
+            __u64 now = bpf_ktime_get_ns();
+            bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
+            bpf_map_delete_elem(&conntrack_map, &flow_key);
+            return XDP_DROP;
         } else {
-            //bpf_printk("should never happen\n");
+            // bpf_printk("should never happen\n");
         }
     }
 
-    
     return XDP_PASS;
 }
 
