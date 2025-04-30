@@ -1,6 +1,6 @@
 Minecraft-XDP-eBPF
 ==========
-This is the first free and public available Minecraft XDP filter written in pure c.
+This is the first free and public available Minecraft Java Edition XDP filter written in pure c.
 
 Currently the filter is only available for ipv4.
 
