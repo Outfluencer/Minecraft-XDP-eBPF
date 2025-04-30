@@ -1,8 +1,10 @@
 Minecraft-XDP-eBPF
 ==========
-This is the first free and public available Minecraft XDP Filter written in pure c.
+This is the first free and public available Minecraft XDP filter written in pure c.
 
 Currently the filter is only available for ipv4.
+
+The default port the filter is filtering for is 25565.
 
 # What does the filter do
 The filter analyses Minecraft handshakes, status, ping and login requests. And drops invalid connections if detected.
