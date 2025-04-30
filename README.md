@@ -11,7 +11,7 @@ The filter analyses Minecraft handshakes, status, ping and login requests, and d
 If a connection is dropped, the ip will also be blacklisted for 60 seconds, so all new syn's will be dropped.
 
 # How to install
-Download the latest release from the release tab or compile the xdp_loader yourself. And run the `./xdp_loader`. You can also run it in a screen.
+Download the latest release from the release tab or compile the xdp_loader yourself. And run the `./xdp_loader <network interface>`. You can also run it in a screen.
 Note: if you exit the xdp loader, the xdp programm will be unloaded, as the loader is needed to manage connection state maps.
 
 # Compilation requirements
