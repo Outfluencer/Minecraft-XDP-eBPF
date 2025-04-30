@@ -14,9 +14,4 @@ Any kind of pull request that improves the filter is very welcome.
 # ⭐ Don't forget to star the project! ⭐
 
 # Compilation requirements
-sudo apt update
-sudo apt install clang -y
-sudo apt install xxd -y
-sudo apt install gcc-multilib -y
-sudo apt install libbpf-dev -y
-sudo apt install libxdp-dev -y
+sudo apt update && sudo apt install -y clang xxd gcc-multilib libbpf-dev libxdp-dev
