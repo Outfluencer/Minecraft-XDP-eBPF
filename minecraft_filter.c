@@ -10,7 +10,7 @@
 #define htons(x) ((uint16_t)((((x) & 0xff00) >> 8) | (((x) & 0x00ff) << 8)))
 
 // Minecraft server port
-const uint16_t MINECRAFT_PORT = htons(25577);
+const uint16_t MINECRAFT_PORT = htons(25565);
 
 // lru map update delay for connection tracking
 const __u64 TIME_UPDATE = 1000000000;
