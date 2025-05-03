@@ -16,7 +16,7 @@ The following will install all dependecies (clang-16 xxd gcc-multilib libbpf-dev
 curl -sSL https://outfluencer.dev/install-xdp.sh | bash
 ```
 You can also install the libs on your own und just run `./build.sh`
-After this you can run the loader with `./xdp_loader <network interface>`. You can also run it in a screen.
+After this you can run the loader with `./xdp_loader <network interface>`
 Note: if you exit the xdp loader, the xdp programm will be unloaded, as the loader is needed to manage connection state maps.
 
 
