@@ -1,16 +1,13 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
-#include <xdp/libxdp.h>
-#include "embedded_data.h"
-#include <net/if.h>
 #include <linux/if_link.h>
-#include <linux/if_xdp.h>
+#include <net/if.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
-#include <unistd.h>
 #include <time.h>
-
+#include <unistd.h>
+#include "embedded_data.h"
 
 static int if_idx = 0;
 
