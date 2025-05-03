@@ -14,7 +14,8 @@ static int if_idx = 0;
 void sigint_handler(int sig) {
     printf("\nCaught signal %d (Ctrl+C). Exiting gracefully...\n", sig);
     if (if_idx) {
-        bpf_set_link_xdp_fd(if_idx, -1, 0);
+        // bpf_set_link_xdp_fd(if_idx, -1, 0);// for older versions
+        bpf_xdp_detach(if_idx, 0, NULL);
     }
     exit(0);
 }
@@ -57,7 +58,9 @@ int main(int argc, char **argv)
     }
 
     int program_fd = bpf_program__fd(prog);
-    int attached_fd = bpf_set_link_xdp_fd(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST);//bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
+    // for older versions
+    // int attached_fd = bpf_set_link_xdp_fd(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST); //bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
+    int attached_fd = bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
 
     if (attached_fd < 0) {
         fprintf(stderr, "Failed to attach BPF program to interface %s\n", interface);
