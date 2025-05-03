@@ -15,6 +15,7 @@ Download the latest release from the release tab or compile the xdp_loader yours
 Note: if you exit the xdp loader, the xdp programm will be unloaded, as the loader is needed to manage connection state maps.
 
 # Compilation requirements
+clang 14 required
 `sudo apt update && sudo apt install -y clang xxd gcc-multilib libbpf-dev libxdp-dev`
 
 # Compilation
