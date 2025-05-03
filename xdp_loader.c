@@ -81,7 +81,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (signal(SIGINT, sigint_handler) == SIG_ERR && signal(9, sigint_handler) == SIG_ERR) {
+    if (signal(SIGINT, sigint_handler) == SIG_ERR && signal(SIGTERM, sigint_handler) == SIG_ERR && signal(SIGSEGV, sigint_handler) == SIG_ERR) {
         perror("Unable to set signal handler");
         return 1;
     }
