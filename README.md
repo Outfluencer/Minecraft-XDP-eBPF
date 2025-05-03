@@ -14,16 +14,11 @@ If a connection is dropped, the ip will also be blacklisted for 60 seconds, so a
 Download the latest release from the release tab or compile the xdp_loader yourself. And run `./xdp_loader <network interface>`. You can also run it in a screen.
 Note: if you exit the xdp loader, the xdp programm will be unloaded, as the loader is needed to manage connection state maps.
 
-# Compilation requirements
-clang 14 required
-`sudo apt update && sudo apt install -y clang xxd gcc-multilib libbpf-dev libxdp-dev`
-
-# Compilation
+# Install
+The following will install all dependecies (clang-16 xxd gcc-multilib libbpf-dev git) if not already installed and will then compile the xdp loader: 
 ```
-git clone https://github.com/Outfluencer/Minecraft-XDP-eBPF.git
-cd Minecraft-XDP-eBPF
-chmod 777 build.sh
-./build.sh
+curl -sSL https://outfluencer.dev/install-xdp.sh | bash
 ```
+After this you can run the loader with ./xdp_loader
 
 ⭐ Don't forget to star the project!
