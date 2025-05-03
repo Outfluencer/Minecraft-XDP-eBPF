@@ -10,7 +10,7 @@ The default port for filtering is 25565.
 The filter analyses Minecraft handshakes, status, ping and login requests, and drops invalid connections.
 If a connection is dropped, the ip will also be blacklisted for 60 seconds, so all new tcp packets will be dropped.
 
-# Install
+# Install (Debian / Ubuntu)
 The following will install all dependecies (clang-16 xxd gcc-multilib libbpf-dev git) if not already installed and will then compile the xdp loader: 
 ```
 curl -sSL https://outfluencer.dev/install-xdp.sh | bash
