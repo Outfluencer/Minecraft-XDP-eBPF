@@ -8,22 +8,74 @@
 #include <time.h>
 #include <unistd.h>
 #include "embedded_data.h"
+#include <dlfcn.h>
+
+typedef int (*bpf_set_link_xdp_fd_fn)(int, int, __u32);
+typedef int (*bpf_xdp_attach_fn)(int, int, __u32, void *);
+typedef int (*bpf_xdp_detach_fn)(int, __u32, void *);
+
+static bpf_set_link_xdp_fd_fn legacy_attach = NULL;
+static bpf_xdp_attach_fn modern_attach = NULL;
+static bpf_xdp_detach_fn modern_detach = NULL;
+
+static int resolved = 0;
+
+static int resolve_libbpf_symbols() {
+    if (resolved) return 0;
+    resolved = 1;
+
+    void *handle = dlopen("libbpf.so", RTLD_LAZY);
+    if (!handle) {
+        fprintf(stderr, "libbpf.so not found: %s\n", dlerror());
+        return 0;
+    }
+
+    legacy_attach = (bpf_set_link_xdp_fd_fn)dlsym(handle, "bpf_set_link_xdp_fd");
+    modern_attach = (bpf_xdp_attach_fn)dlsym(handle, "bpf_xdp_attach");
+    modern_detach = (bpf_xdp_detach_fn)dlsym(handle, "bpf_xdp_detach");
+
+    if(legacy_attach) {
+        printf("Use bpf_set_link_xdp_fd to attach and detach xbf\n");
+    } else {
+        if(modern_attach) {
+            printf("Use bpf_xdp_attach to attach xbf\n");
+        }
+        if (modern_detach){
+            printf("Use bpf_xdp_detach to detach xbf\n");
+        }
+    }
+
+    if (!legacy_attach && (!modern_attach&& !modern_detach)) {
+        return 0;
+    }
+
+    return 1;
+}
 
 static int if_idx = 0;
 
 void sigint_handler(int sig) {
     printf("\nCaught signal %d (Ctrl+C). Exiting gracefully...\n", sig);
     if (if_idx) {
-        // bpf_set_link_xdp_fd(if_idx, -1, 0);// for older versions
-        bpf_xdp_detach(if_idx, 0, NULL);
+        if (legacy_attach) {
+            legacy_attach(if_idx, -1, 0);
+        } else {
+            modern_detach(if_idx, 0, NULL);
+        }
     }
     exit(0);
 }
 
 static struct bpf_object *bpf_obj;
 
+
 int main(int argc, char **argv) 
 {
+    if (!resolve_libbpf_symbols()) {
+        fprintf(stderr, "No way found to load xbf\n");
+        return 1;
+    }
+
     if (argc < 2) {
         printf("Usage: %s <network interface>\n", argv[0]);
         return 1;
@@ -58,9 +110,14 @@ int main(int argc, char **argv)
     }
 
     int program_fd = bpf_program__fd(prog);
+    int attached_fd = 0;
     // for older versions
     // int attached_fd = bpf_set_link_xdp_fd(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST); //bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
-    int attached_fd = bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
+    if(legacy_attach) {
+        attached_fd = legacy_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST); //bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
+    } else {
+        attached_fd = modern_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
+    }
 
     if (attached_fd < 0) {
         fprintf(stderr, "Failed to attach BPF program to interface %s\n", interface);
