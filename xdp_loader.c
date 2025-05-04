@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include "embedded_data.h"
 #include <dlfcn.h>
+#include "common.h"
 
 typedef int (*bpf_set_link_xdp_fd_fn)(int, int, __u32);
 typedef int (*bpf_xdp_attach_fn)(int, int, __u32, void *);
@@ -17,7 +18,6 @@ typedef int (*bpf_xdp_detach_fn)(int, __u32, void *);
 static bpf_set_link_xdp_fd_fn legacy_attach = NULL;
 static bpf_xdp_attach_fn modern_attach = NULL;
 static bpf_xdp_detach_fn modern_detach = NULL;
-
 static int resolved = 0;
 
 static int resolve_libbpf_symbols() {
@@ -136,7 +136,6 @@ int main(int argc, char **argv)
         sigint_handler(1);
         return 1;
     }
-    printf("connection_map_fd: %i\n", connection_map_fd);
 
     int blocked_ips_map_fd = bpf_obj_get("/sys/fs/bpf/blocked_ips");
     if (blocked_ips_map_fd < 0) {
@@ -144,56 +143,68 @@ int main(int argc, char **argv)
         sigint_handler(1);
         return 1;
     }
-    printf("blocked_ips_map_fd: %i\n", blocked_ips_map_fd);
 
     while(1) {
         // Get the current time in nanoseconds since boot
         // the bpf nano time works the same
         struct timespec ts;
         clock_gettime(CLOCK_BOOTTIME, &ts);
-        uint64_t now = (uint64_t)ts.tv_sec * 1000000000L + ts.tv_nsec;
+        uint64_t now = (uint64_t)ts.tv_sec * SECOND_TO_NANOS + ts.tv_nsec;
 
         {
-            __u64 key = 0;
-            __u64 next_key;
+            struct ipv4_flow_key key;
+            struct ipv4_flow_key next_key;
             __u64 last_connection_update;
             int removed_count = 0;
-            printf("start removing old connections\n");
-            while (bpf_map_get_next_key(connection_map_fd, &key, &next_key) == 0) {
-                if (bpf_map_lookup_elem(connection_map_fd, &next_key, &last_connection_update) == 0) {
-                    // timed out
-                    if (last_connection_update + ( 1000000000L * 45 ) < now ) {
-                        removed_count++;
-                        bpf_map_delete_elem(connection_map_fd, &next_key);
+
+            // Get the first key using NULL
+            if (bpf_map_get_next_key(connection_map_fd, NULL, &key) == 0) {
+                while (1) {
+                    int has_next = bpf_map_get_next_key(connection_map_fd, &key, &next_key);
+                    if (bpf_map_lookup_elem(connection_map_fd, &key, &last_connection_update) == 0) {
+                        if (last_connection_update + (SECOND_TO_NANOS * 45) < now) {
+                            removed_count++;
+                            bpf_map_delete_elem(connection_map_fd, &key);
+                        }                
                     }
-                } else {
-                    break;
+                    if (has_next != 0) {
+                        break;
+                    }
+                    key = next_key;
                 }
-                key = next_key;
+    
+                if (removed_count > 0) {
+                    printf("removed %i old connections\n", removed_count);
+                }
             }
-            printf("removed %i old connections\n", removed_count);
         }
         
 
         {
-            __u64 key = 0;
-            __u64 next_key;
+            __u32 key;
+            __u32 next_key;
             __u64 block_time;
             int removed_count = 0;
-            printf("start removing old connection blocks\n");
-            while (bpf_map_get_next_key(blocked_ips_map_fd, &key, &next_key) == 0) {
-                if (bpf_map_lookup_elem(blocked_ips_map_fd, &next_key, &block_time) == 0) {
-                    // remove block
-                    if (block_time + ( 1000000000L * 60 ) < now ) {
-                        removed_count++;
-                        bpf_map_delete_elem(blocked_ips_map_fd, &next_key);
+            // Get the first key using NULL
+            if (bpf_map_get_next_key(blocked_ips_map_fd, NULL, &key) == 0) {
+                while (1) {
+                    int has_next = bpf_map_get_next_key(blocked_ips_map_fd, &key, &next_key);
+                    if (bpf_map_lookup_elem(blocked_ips_map_fd, &key, &block_time) == 0) {
+                        if (block_time + (SECOND_TO_NANOS * 60) < now) {
+                            removed_count++;
+                            bpf_map_delete_elem(blocked_ips_map_fd, &key);
+                        }                
                     }
-                } else {
-                    break;
+                    if (has_next != 0) {
+                        break;
+                    }
+                    key = next_key;
                 }
-                key = next_key;
+    
+                if (removed_count > 0) {
+                    printf("removed %i blocked ips\n", removed_count);
+                }
             }
-            printf("removed blocks of %i connections\n", removed_count);
         }
         
         sleep(15);
