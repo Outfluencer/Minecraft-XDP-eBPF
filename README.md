@@ -6,6 +6,8 @@ Currently the filter is only available for ipv4.
 
 The default port for filtering is 25565.
 
+Supported Minecraft Versions: 1.8.0 - 1.21.5
+
 # What does the filter do
 The filter analyses Minecraft handshakes, status, ping and login requests, and drops invalid connections.
 If a connection is dropped, the ip will also be blacklisted for 60 seconds, so all new tcp packets will be dropped.
