@@ -23,5 +23,6 @@ You can also install the libs on your own und just run `./build.sh`
 After this you can run the loader with `./xdp_loader <network interface>`
 Note: if you exit the xdp loader, the xdp programm will be unloaded, as the loader is needed to manage connection state maps.
 
+Test server with the filter: dev.outfluencer.dev
 
 ⭐ Don't forget to star the project!
