@@ -18,12 +18,8 @@ typedef int (*bpf_xdp_detach_fn)(int, __u32, void *);
 static bpf_set_link_xdp_fd_fn legacy_attach = NULL;
 static bpf_xdp_attach_fn modern_attach = NULL;
 static bpf_xdp_detach_fn modern_detach = NULL;
-static int resolved = 0;
 
 static int resolve_libbpf_symbols() {
-    if (resolved) return 0;
-    resolved = 1;
-
     void *handle = dlopen("libbpf.so", RTLD_LAZY);
     if (!handle) {
         fprintf(stderr, "libbpf.so not found: %s\n", dlerror());
@@ -179,7 +175,6 @@ int main(int argc, char **argv)
             }
         }
         
-
         {
             __u32 key;
             __u32 next_key;
