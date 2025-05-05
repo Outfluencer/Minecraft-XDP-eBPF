@@ -11,6 +11,14 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          clean: true
+          submodules: false
+          persist-credentials: true
+          fetch-tags: false
+          show-progress: true
+          set-safe-directory: true
       - name: Install Dependencies
         run: |
           apt update
