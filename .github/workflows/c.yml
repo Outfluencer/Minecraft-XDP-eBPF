@@ -3,28 +3,14 @@ on: [push, pull_request]
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
-    strategy:
-      matrix:
-        image: [debian:11, debian:12, ubuntu:22.04, ubuntu:24.04]
-    container:
-      image: ${{ matrix.image }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          clean: true
-          submodules: false
-          persist-credentials: true
-          fetch-tags: false
-          show-progress: true
-          set-safe-directory: true
       - name: Install Dependencies
         run: |
-          apt update
-          apt install -y clang-16 xxd gcc-multilib libbpf-dev
-          update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
+          sudo apt update
+          sudo apt install -y clang-16 xxd gcc-multilib libbpf-dev
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
       - name: Build
         run: |
           chmod +x ./build.sh
