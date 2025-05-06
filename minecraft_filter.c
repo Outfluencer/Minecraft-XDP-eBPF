@@ -253,7 +253,7 @@ static __always_inline int inspect_login_packet(signed char *start, signed char 
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-static int inspect_handshake(signed char *start, signed char *end, int *protocol_version) {
+static int inspect_handshake(signed char *start, signed char *end, int *protocol_version, __u16 tcp_dest) {
 
     __u32 size = end - start;
     if (size > MAX_HANDSHAKE_LEN + MAX_LOGIN_LEN || size < MIN_HANDSHAKE_LEN) {
@@ -296,7 +296,11 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
         if (reader_index + host_len <= end) {
             reader_index += host_len;
             if (reader_index + 2 <= end) {
-                uint16_t port = ((uint16_t*)reader_index)[0];
+                __u16 port = ((__u16*)reader_index)[0];
+                // tcp packet port should be the same as the port in the handshake
+                if (port != tcp_dest) {
+                    return 0;
+                }
                 reader_index += 2;
             } else {
                 return 0;
@@ -307,6 +311,7 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
     } else {
         return 0;
     }
+
 
 
     int32_t intention;
@@ -464,7 +469,7 @@ int minecraft_filter(struct xdp_md *ctx) {
         }
         if (initial_state->state >= AWAIT_MC_HANDSHAKE) {
             int protocol_version = 0;
-            int nextState = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version);
+            int nextState = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest);
             // if the first packet has invalid length, we can block it
             // even with retransmition this len should always be valid‚
             if (nextState) {
