@@ -25,6 +25,7 @@ Note: if you exit the xdp loader, the xdp programm will be unloaded, as the load
 
 Test server with the filter: dev.outfluencer.dev
 
-Thats how it looks like: https://youtu.be/Tq8QHJAMhRc
-
 ⭐ Don't forget to star the project!
+
+## Showcase
+[![Showcase](https://github.com/user-attachments/assets/68fbd57f-68a1-4eb4-8080-a13f1e62a119)](https://youtu.be/Tq8QHJAMhRc)
