@@ -1,0 +1,17 @@
+name: sh Build
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y clang-16 xxd gcc-multilib libbpf-dev
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
+      - name: Build
+        run: |
+          chmod +x ./build.sh
+          ./build.sh
