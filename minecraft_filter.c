@@ -14,6 +14,8 @@
 // Minecraft server port
 const uint16_t MINECRAFT_PORT = htons(25565);
 
+#define LEGACY_PING 10000
+
 // Definitions
 // if defines send a rst to the protected server to force close the connection.
 #define INJECT_RESET
@@ -62,16 +64,6 @@ struct {
     __type(value, __u64); // blocked at time
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } blocked_ips SEC(".maps");
-
-
-// Parse TCP header (returns NULL if out-of-bounds)
-static __always_inline struct tcphdr *parse_tcp(void *data_end, struct iphdr *ip) {
-    struct tcphdr *tcp = (struct tcphdr *)((__u8 *)ip + sizeof(struct iphdr));
-    if ((void *)(tcp + 1) > data_end) {
-        return NULL; // Packet not large enough for TCP header
-    }
-    return tcp;
-}
 
 // Check for TCP bypass attempt via abnormal flags or state
 static __always_inline int detect_tcp_bypass(struct tcphdr *tcp) {
@@ -268,6 +260,14 @@ static __always_inline int inspect_login_packet(signed char *start, signed char 
 static int inspect_handshake(signed char *start, signed char *end, int *protocol_version, __u16 tcp_dest) {
 
     __u32 size = end - start;
+
+    if (start + 1 <= end) {
+        if (start[0] == (signed char)0xFE) {
+            // this is a legacy packet
+            return LEGACY_PING;
+        }
+    }
+
     if (size > MAX_HANDSHAKE_LEN + MAX_LOGIN_LEN || size < MIN_HANDSHAKE_LEN) {
         return 0;
     }
@@ -308,11 +308,11 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
         if (reader_index + host_len <= end) {
             reader_index += host_len;
             if (reader_index + 2 <= end) {
-                __u16 port = ((__u16*)reader_index)[0];
+               // __u16 port = ((__u16*)reader_index)[0];
                 // tcp packet port should be the same as the port in the handshake
-                if (port != tcp_dest) {
-                    return 0;
-                }
+                //if (port != tcp_dest) {
+                //    return 0;
+                //}
                 reader_index += 2;
             } else {
                 return 0;
@@ -375,20 +375,17 @@ int minecraft_filter(struct xdp_md *ctx) {
     void *data     = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
-    // Parse Ethernet header
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end) {
         return XDP_ABORTED;
     }
 
-    // Only handle IPv4 packets (IPv6 or others are passed through)
     if (eth->h_proto != htons(ETH_P_IP)) {
         return XDP_PASS;
     }
 
-    // Parse IPv4 header
-    struct iphdr *ip = (struct iphdr *)(eth + 1);
-    if ((void *)(ip + 1) > data_end) {
+    struct iphdr *ip = data + sizeof(struct ethhdr);
+    if ((void *)(ip + 1) > data_end || ip->ihl < 5) {
         return XDP_ABORTED;
     }
 
@@ -396,10 +393,17 @@ int minecraft_filter(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    // Prepare a flow key for tracking (we'll fill it based on protocol below)
-    // Parse TCP header
-    struct tcphdr *tcp = parse_tcp(data_end, ip);
-    if (!tcp) {
+    struct tcphdr *tcp = data + sizeof(struct ethhdr) + (ip->ihl * 4);
+    if ((void *)(tcp + 1) > data_end) {
+        return XDP_ABORTED;
+    }
+
+    if (tcp->doff < 5) {
+        return XDP_ABORTED;
+    }
+    
+    __u32 tcp_hdr_len = tcp->doff * 4;
+    if ((void *)tcp + tcp_hdr_len > data_end) {
         return XDP_ABORTED;
     }
 
@@ -434,7 +438,6 @@ int minecraft_filter(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-
     struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
     
     if (initial_state == NULL) {
@@ -466,22 +469,25 @@ int minecraft_filter(struct xdp_md *ctx) {
     if (tcp_payload < tcp_payload_end) {
 
         if (!tcp->ack) {
-            __u64 now = bpf_ktime_get_ns();
-            bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
+            // drop the connection
             bpf_map_delete_elem(&conntrack_map, &flow_key);
             return drop_or_rst(tcp);
         }
+
         if (state >= AWAIT_MC_HANDSHAKE) {
             int protocol_version = 0;
-            int nextState = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest);
+            int next_state = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest);
             // if the first packet has invalid length, we can block it
             // even with retransmition this len should always be valid‚
-            if (nextState) {
-                initial_state->state = nextState;
+            if (next_state) {
+                if (next_state == LEGACY_PING) {
+                    bpf_map_delete_elem(&conntrack_map, &flow_key);
+                    return drop_or_rst(tcp);
+                }
+                initial_state->state = next_state;
                 initial_state->protocol = protocol_version;
-                // bpf_printk("valid handshake %i %i\n", nextState, protocol_version);
                 // handshake & login/status
-                if (nextState == DISABLE_FILTER) {
+                if (next_state == DISABLE_FILTER) {
                     __u64 now = bpf_ktime_get_ns();
                     bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
                     bpf_map_delete_elem(&conntrack_map, &flow_key);
@@ -489,9 +495,8 @@ int minecraft_filter(struct xdp_md *ctx) {
                     bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY);
                 }
             } else {
-                // bpf_printk("!invalid handshake\n");
                 // invalid handshake drop
-                if (++initial_state->state > AWAIT_MC_HANDSHAKE + 3) {
+                if (++initial_state->state > AWAIT_MC_HANDSHAKE + 10) {
                     __u64 now = bpf_ktime_get_ns();
                     bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
                     bpf_map_delete_elem(&conntrack_map, &flow_key);
@@ -503,45 +508,29 @@ int minecraft_filter(struct xdp_md *ctx) {
                 return XDP_DROP;
             }   
         } else if (state == AWAIT_STATUS_REQUEST) {
-            if(inspect_status_request(tcp_payload, tcp_payload_end)) {
-                initial_state->state = AWAIT_PING;
-                bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY);
-            } else {
-                //  bpf_printk("!inspect_status_request\n");
-                __u64 now = bpf_ktime_get_ns();
-                bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
-                bpf_map_delete_elem(&conntrack_map, &flow_key);
-                return drop_or_rst(tcp);
+            if(!inspect_status_request(tcp_payload, tcp_payload_end)) {
+                return XDP_DROP;
             }
+            initial_state->state = AWAIT_PING;
+            bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY);
         } else if (state == AWAIT_PING) {
             if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
-                //  bpf_printk("!inspect_ping_request\n");
-                __u64 now = bpf_ktime_get_ns();
-                bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
-                bpf_map_delete_elem(&conntrack_map, &flow_key);
-                return drop_or_rst(tcp);
+                return XDP_DROP;
             }
             initial_state->state = PING_COMPLETE;
             bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY);
         } else if (state == AWAIT_LOGIN) {
-            bpf_map_delete_elem(&conntrack_map, &flow_key);
             if(!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol)) {
-                // bpf_printk("!inspect_login_packet\n");
-                __u64 now = bpf_ktime_get_ns();
-                bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
-                bpf_map_delete_elem(&conntrack_map, &flow_key);
-                return drop_or_rst(tcp);
+                return XDP_DROP;
             }
             __u64 now = bpf_ktime_get_ns();
             bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
+            bpf_map_delete_elem(&conntrack_map, &flow_key);
         } else if (state == PING_COMPLETE) {
-            // bpf_printk("received invalid data after ping request\n");
-            __u64 now = bpf_ktime_get_ns();
-            bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
             bpf_map_delete_elem(&conntrack_map, &flow_key);
             return drop_or_rst(tcp);
         } else {
-            // bpf_printk("should never happen\n");
+            // should never happen
         }
     }
 
