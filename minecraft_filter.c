@@ -14,7 +14,6 @@
 // Minecraft server port
 const uint16_t MINECRAFT_PORT = htons(25565);
 
-// Definitions
 // if defines send a rst to the protected server to force close the connection.
 #define INJECT_RESET
 
@@ -30,7 +29,7 @@ static __always_inline int drop_or_rst(struct tcphdr *tcp) {
     #endif
 }
 
-// PACKET LEN - PACKET ID - DATA
+// length pre checks
 const int MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
 const int MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
 const int MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
@@ -60,12 +59,10 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } blocked_ips SEC(".maps");
 
-// Check for TCP bypass attempt via abnormal flags or state
 static __always_inline int detect_tcp_bypass(struct tcphdr *tcp) {
-    // Drop any packet with no control flags (NULL scan) or an unsolicited SYN-ACK
     if ((!tcp->syn && !tcp->ack && !tcp->fin && !tcp->rst) ||   // no SYN/ACK/FIN/RST flag
         (tcp->syn && tcp->ack) || // SYN+ACK from external (unexpected)
-         tcp->urg) { // Drop if URG flag is set (rarely legitimate, often used in attacks to evade filters)                          
+         tcp->urg) { // Drop if URG flag is set                     
         return 1;
     }
     return 0;
@@ -258,7 +255,6 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
 
     if (start + 1 <= end) {
         if (start[0] == (signed char)0xFE) {
-            // this is a legacy packet
             return RECEIVED_LEGACY_PING;
         }
     }
@@ -303,11 +299,7 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
         if (reader_index + host_len <= end) {
             reader_index += host_len;
             if (reader_index + 2 <= end) {
-               // __u16 port = ((__u16*)reader_index)[0];
-                // tcp packet port should be the same as the port in the handshake
-                //if (port != tcp_dest) {
-                //    return 0;
-                //}
+                // __u16 port = ((__u16*)reader_index)[0];
                 reader_index += 2;
             } else {
                 return 0;
