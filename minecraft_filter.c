@@ -453,7 +453,7 @@ int minecraft_filter(struct xdp_md *ctx) {
 
     if (tcp_payload < tcp_payload_end) {
 
-        if (!tcp->psh || !tcp->ack) {
+        if (!tcp->ack) {
             __u64 now = bpf_ktime_get_ns();
             bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
             bpf_map_delete_elem(&conntrack_map, &flow_key);
