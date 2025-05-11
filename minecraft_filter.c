@@ -417,13 +417,6 @@ int minecraft_filter(struct xdp_md *ctx) {
     }
 
     __u32 src_ip = ip->saddr;
-
-    // check if ipv4 is blocked
-    __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
-    if (blocked != NULL) {
-        return XDP_DROP;
-    }
-
     // Compute flow key for TCP connection
     struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
 
@@ -443,6 +436,13 @@ int minecraft_filter(struct xdp_md *ctx) {
         if (!tcp->syn) {
             return XDP_DROP;
         }
+
+        // drop syn's of new connections if blocked
+        __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
+        if (blocked != NULL) {
+            return XDP_DROP;
+        }
+
         // it's a valid new SYN, create a new flow entry
         struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0);
         bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
