@@ -59,6 +59,14 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } blocked_ips SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 65535);
+    __type(key, __u32);   // ipv4 address (4 bytes)
+    __type(value, __u32); // how many connections
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} connection_throttle SEC(".maps");
+
 static __always_inline int detect_tcp_bypass(struct tcphdr *tcp) {
     if ((!tcp->syn && !tcp->ack && !tcp->fin && !tcp->rst) ||   // no SYN/ACK/FIN/RST flag
         (tcp->syn && tcp->ack) || // SYN+ACK from external (unexpected)
@@ -417,12 +425,46 @@ int minecraft_filter(struct xdp_md *ctx) {
     }
 
     __u32 src_ip = ip->saddr;
-    // Compute flow key for TCP connection
+
+    // stateless new connection checks
+    if (tcp->syn) {
+        // drop syn's of new connections if blocked
+        __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
+        if (blocked) {
+            return XDP_DROP;
+        }
+
+        // connection throttle
+        // 10 connection per ip per 3 seconds, otherwise drop
+        __u32 *hit_counter = bpf_map_lookup_elem(&connection_throttle, &src_ip);
+        if (hit_counter) {
+            __u32 count = *hit_counter;
+            if (count > 10) {
+                return XDP_DROP;
+            }
+            count++;
+            bpf_map_update_elem(&connection_throttle, &src_ip, &count, BPF_ANY);
+        } else {
+            __u32 new_counter = 1;
+            bpf_map_update_elem(&connection_throttle, &src_ip, &new_counter, BPF_ANY);
+        }
+
+        struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
+        struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
+    
+        if (initial_state) {
+            return XDP_DROP; // drop, we already have a connection
+        }
+        // it's a valid new SYN, create a new flow entry
+        struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0);
+        bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
+        return XDP_PASS;
+    } 
+
     struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
-
-
+    // Compute flow key for TCP connection
     __u64 *lastTime = bpf_map_lookup_elem(&player_connection_map, &flow_key);
-    if (lastTime != NULL) {
+    if (lastTime) {
         __u64 now = bpf_ktime_get_ns();
         if (*lastTime + SECOND_TO_NANOS < now) {
             bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY);
@@ -431,23 +473,9 @@ int minecraft_filter(struct xdp_md *ctx) {
     }
 
     struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
-    
-    if (initial_state == NULL) {
-        if (!tcp->syn) {
-            return XDP_DROP;
-        }
-
-        // drop syn's of new connections if blocked
-        __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
-        if (blocked != NULL) {
-            return XDP_DROP;
-        }
-
-        // it's a valid new SYN, create a new flow entry
-        struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0);
-        bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY);
-        return XDP_PASS;
-    } 
+    if (!initial_state) {
+        return XDP_DROP; // no connection, pass
+    }
 
     __u32 state = initial_state->state;
     if (state == AWAIT_ACK) {
