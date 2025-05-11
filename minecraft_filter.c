@@ -279,7 +279,7 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
     reader_index += packet_id_bytes;
 
     uint32_t protocol_version_bytes = read_varint_sized(reader_index, end, protocol_version, 5);
-    if (!protocol_version_bytes || *protocol_version < 47) {
+    if (!protocol_version_bytes) {
         return 0;
     };
     reader_index += protocol_version_bytes;
