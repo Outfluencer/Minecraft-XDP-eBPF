@@ -10,7 +10,7 @@ Supported Minecraft Versions: 1.8.0 - 1.21.5
 
 # What does the filter do
 The filter analyses Minecraft handshakes, status, ping and login requests, and drops invalid connections.
-If a connection is dropped, the ip will also be blacklisted for 60 seconds, so all new tcp packets will be dropped.
+If a connection is dropped, the ip will also be blacklisted for 60 seconds, so all new connections of that ip will be dropped.
 
 # Install (Debian / Ubuntu)
 The following will install all dependecies (clang-16 xxd gcc-multilib libbpf-dev git) if not already installed and will then compile the xdp loader: 
