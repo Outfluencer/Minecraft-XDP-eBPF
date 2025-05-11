@@ -49,9 +49,13 @@ static int resolve_libbpf_symbols() {
 }
 
 static int if_idx = 0;
+static struct bpf_object *bpf_obj;
 
 void sigint_handler(int sig) {
     printf("\nCaught signal %d (Ctrl+C). Exiting gracefully...\n", sig);
+    if(bpf_obj) {
+        bpf_object__close(bpf_obj);
+    }
     if (if_idx) {
         if (legacy_attach) {
             legacy_attach(if_idx, -1, 0);
@@ -62,23 +66,22 @@ void sigint_handler(int sig) {
     exit(0);
 }
 
-static struct bpf_object *bpf_obj;
-
-
 int main(int argc, char **argv) 
 {
-    if (!resolve_libbpf_symbols()) {
-        fprintf(stderr, "No way found to load xbf\n");
-        return 1;
-    }
-
     if (argc < 2) {
         printf("Usage: %s <network interface>\n", argv[0]);
         return 1;
     }
 
+    printf("Loading minecraft xdp filter by Outfluencer...\n");
+
     if (signal(SIGINT, sigint_handler) == SIG_ERR && signal(SIGTERM, sigint_handler) == SIG_ERR && signal(SIGSEGV, sigint_handler) == SIG_ERR) {
         perror("Unable to set signal handler");
+        return 1;
+    }
+
+    if (!resolve_libbpf_symbols()) {
+        fprintf(stderr, "No way found to load xbf\n");
         return 1;
     }
 
@@ -98,6 +101,12 @@ int main(int argc, char **argv)
     }
 
     int interface_idx = if_nametoindex(interface);
+    if (interface_idx == 0) {
+        fprintf(stderr, "Failed to get interface index for %s\n", interface);
+        bpf_object__close(bpf_obj);
+        return 1;
+    }
+
     struct bpf_program *prog = bpf_object__find_program_by_name(bpf_obj, "minecraft_filter");
     if (!prog) {
         fprintf(stderr, "Failed to find BPF program\n");
@@ -106,16 +115,22 @@ int main(int argc, char **argv)
     }
 
     int program_fd = bpf_program__fd(prog);
-    int attached_fd = 0;
+    if (program_fd < 0) {
+        fprintf(stderr, "Failed to get BPF program FD\n");
+        bpf_object__close(bpf_obj);
+        return 1;
+    }
+    int attached = 0;
     // for older versions
-    // int attached_fd = bpf_set_link_xdp_fd(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST); //bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
     if(legacy_attach) {
-        attached_fd = legacy_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST); //bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
+        printf("Attaching using legacy XDP API...\n");
+        attached = legacy_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST); //bpf_xdp_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
     } else {
-        attached_fd = modern_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
+        printf("Attaching using modern XDP API...\n");
+        attached = modern_attach(interface_idx, program_fd, XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
     }
 
-    if (attached_fd < 0) {
+    if (attached < 0) {
         fprintf(stderr, "Failed to attach BPF program to interface %s\n", interface);
         bpf_object__close(bpf_obj);
         return 1;
@@ -124,18 +139,17 @@ int main(int argc, char **argv)
 
     printf("BPF program attached to interface %s\n", interface);
     printf("Program FD: %i\n", program_fd);
-    printf("Attached FD: %i\n", attached_fd);
 
     int connection_map_fd = bpf_obj_get("/sys/fs/bpf/player_connection_map");
     if (connection_map_fd < 0) {
-        perror("bpf_obj_get /sys/fs/bpf/player_connection_map");
+        perror("Failed to load /sys/fs/bpf/player_connection_map");
         sigint_handler(1);
         return 1;
     }
 
     int blocked_ips_map_fd = bpf_obj_get("/sys/fs/bpf/blocked_ips");
     if (blocked_ips_map_fd < 0) {
-        perror("bpf_obj_get /sys/fs/bpf/blocked_ips");
+        perror("Failed to load /sys/fs/bpf/blocked_ips");
         sigint_handler(1);
         return 1;
     }
