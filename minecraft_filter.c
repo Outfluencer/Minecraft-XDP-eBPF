@@ -105,10 +105,10 @@ static __always_inline uint32_t read_varint_sized(signed char *start, signed cha
     return 0;
 }
 
-// Helper method
-static __always_inline uint32_t read_varint(signed char *start, signed char *end, int32_t *return_value) {
-    return read_varint_sized(start, end, return_value, 5);
-}
+// Helper method // currently unused
+//static __always_inline uint32_t read_varint(signed char *start, signed char *end, int32_t *return_value) {
+//    return read_varint_sized(start, end, return_value, 5);
+//}
 
 // Check for valid status request packet
 static __always_inline int inspect_status_request(signed char *start, signed char *end) {
