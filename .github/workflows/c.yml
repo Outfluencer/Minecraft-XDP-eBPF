@@ -15,3 +15,8 @@ jobs:
         run: |
           chmod +x ./build.sh
           ./build.sh
+      - name: Upload xdp_loader artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xdp_loader
+          path: ./xdp_loader
