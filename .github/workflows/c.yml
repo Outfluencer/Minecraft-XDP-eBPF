@@ -15,7 +15,6 @@ jobs:
         run: |
           chmod +x ./build.sh
           ./build.sh
-          bpftool prog load minecraft_filter.o /dev/null
       - name: Upload xdp_loader artifact
         uses: actions/upload-artifact@v4
         with:
