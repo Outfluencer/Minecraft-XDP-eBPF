@@ -14,21 +14,6 @@
 // Minecraft server port
 const uint16_t MINECRAFT_PORT = htons(25565);
 
-// if defines send a rst to the protected server to force close the connection.
-#define INJECT_RESET
-
-static __always_inline int drop_or_rst(struct tcphdr *tcp) {
-    #ifdef INJECT_RESET
-        tcp->rst = 1;
-        tcp->psh = 0;
-        tcp->ack = 0;
-        tcp->doff = 5;
-        return XDP_PASS;
-    #else
-        return XDP_DROP;
-    #endif
-}
-
 // length pre checks
 const int MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
 const int MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
@@ -370,10 +355,9 @@ static __always_inline int retransmission(struct initial_state *initial_state, _
         __u64 now = bpf_ktime_get_ns();
         bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
         bpf_map_delete_elem(&conntrack_map, &flow_key);
-        return drop_or_rst(tcp);
+    } else {
+        bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY);    
     }
-
-    bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY);    
     return XDP_DROP;
 }
 
@@ -494,7 +478,7 @@ int minecraft_filter(struct xdp_md *ctx) {
         if (!tcp->ack) {
             // drop the connection
             bpf_map_delete_elem(&conntrack_map, &flow_key);
-            return drop_or_rst(tcp);
+            return XDP_DROP;
         }
 
         if (state == AWAIT_MC_HANDSHAKE) {
@@ -508,7 +492,7 @@ int minecraft_filter(struct xdp_md *ctx) {
 
             if (next_state == RECEIVED_LEGACY_PING) { // fully drop legacy ping
                 bpf_map_delete_elem(&conntrack_map, &flow_key);
-                return drop_or_rst(tcp);
+                return XDP_DROP;
             }
 
             initial_state->state = next_state;
@@ -543,7 +527,7 @@ int minecraft_filter(struct xdp_md *ctx) {
             bpf_map_delete_elem(&conntrack_map, &flow_key);
         } else if (state == PING_COMPLETE) {
             bpf_map_delete_elem(&conntrack_map, &flow_key);
-            return drop_or_rst(tcp);
+            return XDP_DROP;
         } else {
             // should never happen
         }
