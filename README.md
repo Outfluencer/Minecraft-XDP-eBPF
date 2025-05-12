@@ -7,20 +7,20 @@ Currently the filter is only available for ipv4 and supports 1.8 - 1.21.5 and 1.
 The default port for filtering is 25565.
 
 # What does the filter do
-The filter analyses Minecraft handshakes, status, ping and login requests, and drops invalid connections.
-If a connection is dropped, the ip will also be blacklisted for 60 seconds, so all new connections of that ip will be dropped.
-The filter also has a intigrated connection throttle, with maximum of 10 syn's per 3 seconds
+The filter analyzes Minecraft handshakes, status, ping, and login requests, and drops invalid connections.
+If a connection is dropped, the IP is blacklisted for 60 seconds — all new connections from that IP will be dropped.
+The filter also has an integrated connection throttle: max 10 SYNs per 3 seconds.
 
 # Install (Debian / Ubuntu)
-The following will install all dependecies (clang-16 xxd gcc-multilib libbpf-dev git) if not already installed and will then compile the xdp loader: 
+The following command installs all dependencies (clang-16, xxd, gcc-multilib, libbpf-dev, git) and compiles the XDP loader:
 ```
 curl -sSL https://outfluencer.dev/install-xdp.sh | bash
 ```
 After that the xdp_loader file should be in the Minecraft-XDP-eBPF directory
 
-You can also install the libs on your own und just run `./build.sh`
+You can also install the libs on your own and just run `./build.sh`
 After this you can run the loader with `./xdp_loader <network interface>`
-Note: if you exit the xdp loader, the xdp programm will be unloaded, as the loader is needed to manage connection state maps.
+Note: This project uses a persistent XDP userspace loader to maintain connection state and manage eBPF maps. Exiting the loader will unload the firewall.
 
 Test server with the filter: dev.outfluencer.dev
 
