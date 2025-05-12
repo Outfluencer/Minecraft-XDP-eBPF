@@ -7,6 +7,8 @@
 #include <bpf/bpf_helpers.h>
 #include "common.h"
 
+#define HIT_COUNT 10
+
 // Minecraft server port
 const __u16 MINECRAFT_PORT = __constant_htons(25565);
 const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
@@ -280,24 +282,12 @@ static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, 
         return 0;
     }
 
-    if (reader_index + host_len_bytes <= end) {
-        reader_index += host_len_bytes;
-        if (reader_index + host_len <= end) {
-            reader_index += host_len;
-            if (reader_index + 2 <= end) {
-                // __u16 port = ((__u16*)reader_index)[0];
-                reader_index += 2;
-            } else {
-                return 0;
-            }
-        }else {
-            return 0;
-        }
-    } else {
-        return 0;
-    }
-
-
+    if (reader_index + host_len_bytes > end) return 0;
+    reader_index += host_len_bytes;
+    if (reader_index + host_len > end) return 0;
+    reader_index += host_len;
+    if (reader_index + 2 > end)return 0;
+    reader_index += 2;
 
     __s32 intention;
     __u32 intention_bytes = read_varint_sized(reader_index, end, &intention, 1);
@@ -331,16 +321,10 @@ static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, 
 static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end) {
     if (end - start != PING_REQUEST_LEN) return 0; 
 
-    if (start[0] != 9) { // len
-        return 0;
-    }
-
     if (start + 1 < end) {
-        if (start[1] != 1) { // packet id
-            return 0;
-        }
+        return start[0] == 9 && start[1] == 1;
     } 
-    return 1;
+    return 0;
 }
 
 static __always_inline __s32 retransmission(struct initial_state *initial_state, __u32 *src_ip, struct ipv4_flow_key *flow_key, struct tcphdr *tcp) {
@@ -416,7 +400,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
         __u32 *hit_counter = bpf_map_lookup_elem(&connection_throttle, &src_ip);
         if (hit_counter) {
             __u32 count = *hit_counter;
-            if (count > 10) {
+            if (count > HIT_COUNT) {
                 return XDP_DROP;
             }
             count++;
