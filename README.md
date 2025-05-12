@@ -1,12 +1,10 @@
-Minecraft-XDP-eBPF
+Minecraft XDP Filter using eBPF – L7 DDoS Protection
 ==========
-This is the first free and public available Minecraft Java Edition XDP filter written in pure c.
+This project offers a high-performance XDP-based firewall utilizing eBPF, specifically designed for Minecraft Java Edition servers. It effectively mitigates L7 DDoS attacks by filtering malicious packets before they reach the server.
 
-Currently the filter is only available for ipv4.
+Currently the filter is only available for ipv4 and supports 1.8 - 1.21.5 and 1.7 motd.
 
 The default port for filtering is 25565.
-
-Supported Minecraft Versions: 1.8.0 - 1.21.5
 
 # What does the filter do
 The filter analyses Minecraft handshakes, status, ping and login requests, and drops invalid connections.
@@ -27,6 +25,3 @@ Note: if you exit the xdp loader, the xdp programm will be unloaded, as the load
 Test server with the filter: dev.outfluencer.dev
 
 ⭐ Don't forget to star the project!
-
-## Showcase
-[![Showcase](https://github.com/user-attachments/assets/68fbd57f-68a1-4eb4-8080-a13f1e62a119)](https://youtu.be/Tq8QHJAMhRc)
