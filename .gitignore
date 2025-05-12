@@ -1,0 +1,19 @@
+# VSCode settings
+.vscode/
+
+# Build output
+build/
+*.o
+*.elf
+*.so
+*.out
+*.bin
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# System files
+.DS_Store
+Thumbs.db
