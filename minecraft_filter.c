@@ -5,21 +5,18 @@
 #include <linux/tcp.h>
 #include <linux/in.h>
 #include <bpf/bpf_helpers.h>
-#include <stdint.h>
 #include "common.h"
 
-// htons method you know
-#define htons(x) ((uint16_t)((((x) & 0xff00) >> 8) | (((x) & 0x00ff) << 8)))
-
 // Minecraft server port
-const uint16_t MINECRAFT_PORT = htons(25565);
+const __u16 MINECRAFT_PORT = __constant_htons(25565);
+const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
 
 // length pre checks
-const int MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
-const int MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
-const int MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
-const int PING_REQUEST_LEN = 10; // drop empty names instantly
-const int MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
+const __u32 MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
+const __u32 MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
+const __u32 MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
+const __u32 PING_REQUEST_LEN = 10; // drop empty names instantly
+const __u32 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -52,7 +49,7 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } connection_throttle SEC(".maps");
 
-static __always_inline int detect_tcp_bypass(struct tcphdr *tcp) {
+static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp) {
     if ((!tcp->syn && !tcp->ack && !tcp->fin && !tcp->rst) ||   // no SYN/ACK/FIN/RST flag
         (tcp->syn && tcp->ack) || // SYN+ACK from external (unexpected)
          tcp->urg) { // Drop if URG flag is set                     
@@ -62,30 +59,30 @@ static __always_inline int detect_tcp_bypass(struct tcphdr *tcp) {
 }
 
 // Read Minecraft varint
-static __always_inline uint32_t read_varint_sized(signed char *start, signed char *end, int32_t *return_value, char max_size) {
+static __always_inline __u32 read_varint_sized(__s8 *start, __s8 *end, __s32 *return_value, __u8 max_size) {
     // i don't do loops in ebf
     if (max_size >= 1 && start + 1 <= end) {
-        signed char first = start[0];
+        __s8 first = start[0];
         if ((first & 0x80) != 0x80) {
             *return_value = first;
             return 1;
         } else if (max_size >= 2 && start + 2 <= end) {
-            signed char second = start[1];
+            __s8 second = start[1];
             if ((second & 0x80) != 0x80) {
                 *return_value = (first & 0x7F) | ((second & 0x7F) << 7);
                 return 2;
             } else if (max_size >= 3 && start + 3 <= end) {
-                signed char third = start[2];
+                __s8 third = start[2];
                 if ((third & 0x80) != 0x80) {
                     *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14);
                     return 3;
                 } else if (max_size >= 4 && start + 4 <= end) {
-                    signed char fourth = start[3];
+                    __s8 fourth = start[3];
                     if ((fourth & 0x80) != 0x80) {
                         *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21);
                         return 4;
                     } else if (max_size >= 5 && start + 5 <= end) {
-                        signed char fifth = start[4];
+                        __s8 fifth = start[4];
                         if ((fifth & 0x80) != 0x80) {
                             *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21) | ((fifth & 0x7F) << 28);
                             return 5;
@@ -98,39 +95,35 @@ static __always_inline uint32_t read_varint_sized(signed char *start, signed cha
     return 0;
 }
 
-// Helper method // currently unused
-//static __always_inline uint32_t read_varint(signed char *start, signed char *end, int32_t *return_value) {
-//    return read_varint_sized(start, end, return_value, 5);
-//}
 
 // Check for valid status request packet
-static __always_inline int inspect_status_request(signed char *start, signed char *end) {
+static __always_inline __u8 inspect_status_request(__s8 *start, __s8 *end) {
     return start + 2 <= end && start[0] == 1 && start[1] == 0;
 }
 
 // Check for valid login request packet
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
-static __always_inline int inspect_login_packet(signed char *start, signed char *end, int protocol_version) {
+static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 protocol_version) {
     __u32 size = end - start;
     if (size < MIN_LOGIN_LEN || size > MAX_LOGIN_LEN) return 0; 
 
-    signed char *reader_index = start;
-    int32_t packet_len;
-    uint32_t packet_len_bytes = read_varint_sized(start, end, &packet_len, 2);
+    __s8 *reader_index = start;
+    __s32 packet_len;
+    __u32 packet_len_bytes = read_varint_sized(start, end, &packet_len, 2);
     if (!packet_len_bytes || packet_len > MAX_LOGIN_LEN) {
         return 0;
     };
     reader_index += packet_len_bytes;
 
-    int32_t packet_id;
-    uint32_t packet_id_bytes = read_varint_sized(reader_index, end, &packet_id, 1);
+    __s32 packet_id;
+    __u32 packet_id_bytes = read_varint_sized(reader_index, end, &packet_id, 1);
     if (!packet_id_bytes || packet_id != 0x00) {
         return 0;
     };
     reader_index += packet_id_bytes;
 
-    int32_t name_len;
-    uint32_t name_len_bytes = read_varint_sized(reader_index, end, &name_len, 2);
+    __s32 name_len;
+    __u32 name_len_bytes = read_varint_sized(reader_index, end, &name_len, 2);
     if (!name_len_bytes) {
         return 0;
     };
@@ -145,13 +138,13 @@ static __always_inline int inspect_login_packet(signed char *start, signed char 
             // 1_19                                          1_19_3
             if (protocol_version >= 759 && protocol_version < 761) {
                 if (reader_index + 1 <= end) {
-                    char has_public_key = reader_index[0];
+                    __s8 has_public_key = reader_index[0];
                     reader_index++;
                     if (has_public_key) {
                         if (reader_index + 8 <= end) {
                             reader_index += 8; // skip expiry time
-                            int32_t key_len;
-                            uint32_t key_len_bytes = read_varint_sized(reader_index, end, &key_len, 2);
+                            __s32 key_len;
+                            __u32 key_len_bytes = read_varint_sized(reader_index, end, &key_len, 2);
 
                             // i hate this bpf verfier );, we can't merge this if's together
                             if (!key_len_bytes) {
@@ -165,8 +158,8 @@ static __always_inline int inspect_login_packet(signed char *start, signed char 
                                 reader_index += key_len_bytes;
                                 if (key_len >= 0 && reader_index + key_len <= end) {
                                     reader_index += key_len;
-                                    int32_t signaturey_len;
-                                    uint32_t signaturey_len_bytes = read_varint_sized(reader_index, end, &signaturey_len, 2);
+                                    __s32 signaturey_len;
+                                    __u32 signaturey_len_bytes = read_varint_sized(reader_index, end, &signaturey_len, 2);
 
                                     // i hate this bpf verfier );, we can't merge this if's together
                                     if (!signaturey_len_bytes) {
@@ -211,7 +204,7 @@ static __always_inline int inspect_login_packet(signed char *start, signed char 
                 } else {
                     // check space for uuid and boolean
                     if (reader_index + 1 <= end) {
-                        char has_uuid = reader_index[0];
+                        __s8 has_uuid = reader_index[0];
                         reader_index++;
                         if(has_uuid) {
                             if (reader_index + 16 <= end) {
@@ -242,12 +235,12 @@ static __always_inline int inspect_login_packet(signed char *start, signed char 
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-static int inspect_handshake(signed char *start, signed char *end, int *protocol_version, __u16 tcp_dest) {
+static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __u16 tcp_dest) {
 
     __u32 size = end - start;
 
     if (start + 1 <= end) {
-        if (start[0] == (signed char)0xFE) {
+        if (start[0] == (__s8)0xFE) {
             return RECEIVED_LEGACY_PING;
         }
     }
@@ -256,29 +249,29 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
         return 0;
     }
 
-    signed char *reader_index = start;
-    int32_t packet_len;
-    uint32_t packet_len_bytes = read_varint_sized(start, end, &packet_len, 2);
+    __s8 *reader_index = start;
+    __s32 packet_len;
+    __u32 packet_len_bytes = read_varint_sized(start, end, &packet_len, 2);
     if (!packet_len_bytes || packet_len > MAX_HANDSHAKE_LEN) {
         return 0;
     };
     reader_index += packet_len_bytes;
 
-    int32_t packet_id;
-    uint32_t packet_id_bytes = read_varint_sized(reader_index, end, &packet_id, 1);
+    __s32 packet_id;
+    __u32 packet_id_bytes = read_varint_sized(reader_index, end, &packet_id, 1);
     if (!packet_id_bytes || packet_id != 0x00) {
         return 0;
     };
     reader_index += packet_id_bytes;
 
-    uint32_t protocol_version_bytes = read_varint_sized(reader_index, end, protocol_version, 5);
+    __u32 protocol_version_bytes = read_varint_sized(reader_index, end, protocol_version, 5);
     if (!protocol_version_bytes) {
         return 0;
     };
     reader_index += protocol_version_bytes;
 
-    int32_t host_len;
-    uint32_t host_len_bytes = read_varint_sized(reader_index, end, &host_len, 2);
+    __s32 host_len;
+    __u32 host_len_bytes = read_varint_sized(reader_index, end, &host_len, 2);
     if (!host_len_bytes) {
         return 0;
     };
@@ -306,8 +299,8 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
 
 
 
-    int32_t intention;
-    uint32_t intention_bytes = read_varint_sized(reader_index, end, &intention, 1);
+    __s32 intention;
+    __u32 intention_bytes = read_varint_sized(reader_index, end, &intention, 1);
 
     // we could check if the version as state 3 (transfer) but as BungeeCord ignores it i also do so for now
     if (!intention_bytes || (intention != 1 && intention != 2 && (*protocol_version >= 766 ? intention != 3 : 1))) {
@@ -335,7 +328,7 @@ static int inspect_handshake(signed char *start, signed char *end, int *protocol
     return 0;
 }
 
-static __always_inline int inspect_ping_request(signed char *start, signed char *end) {
+static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end) {
     if (end - start != PING_REQUEST_LEN) return 0; 
 
     if (start[0] != 9) { // len
@@ -350,7 +343,7 @@ static __always_inline int inspect_ping_request(signed char *start, signed char 
     return 1;
 }
 
-static __always_inline int retransmission(struct initial_state *initial_state, __u32 *src_ip, struct ipv4_flow_key *flow_key, struct tcphdr *tcp) {
+static __always_inline __s32 retransmission(struct initial_state *initial_state, __u32 *src_ip, struct ipv4_flow_key *flow_key, struct tcphdr *tcp) {
     if (++initial_state->fails > MAX_RETRANSMISSION) {
         __u64 now = bpf_ktime_get_ns();
         bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
@@ -362,7 +355,7 @@ static __always_inline int retransmission(struct initial_state *initial_state, _
 }
 
 SEC("xdp")
-int minecraft_filter(struct xdp_md *ctx) {
+__s32 minecraft_filter(struct xdp_md *ctx) {
     void *data     = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
@@ -371,7 +364,7 @@ int minecraft_filter(struct xdp_md *ctx) {
         return XDP_ABORTED;
     }
 
-    if (eth->h_proto != htons(ETH_P_IP)) {
+    if (eth->h_proto != ETH_IP_PROTO) {
         return XDP_PASS;
     }
 
@@ -470,8 +463,8 @@ int minecraft_filter(struct xdp_md *ctx) {
         bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY);
     }
 
-    signed char *tcp_payload = (signed char *)((__u8 *)tcp + (tcp->doff * 4));
-    signed char *tcp_payload_end = (signed char *) data_end;
+    __s8 *tcp_payload = (__s8 *)((__u8 *)tcp + (tcp->doff * 4));
+    __s8 *tcp_payload_end = (__s8 *) data_end;
 
     if (tcp_payload < tcp_payload_end) {
 
@@ -482,8 +475,8 @@ int minecraft_filter(struct xdp_md *ctx) {
         }
 
         if (state == AWAIT_MC_HANDSHAKE) {
-            int protocol_version = 0;
-            int next_state = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest);
+            __s32 protocol_version = 0;
+            __u32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest);
             // if the first packet has invalid length, we can block it
             // even with retransmition this len should always be valid‚
             if (!next_state) {
