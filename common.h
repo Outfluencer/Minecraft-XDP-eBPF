@@ -43,9 +43,10 @@ static __always_inline struct ipv4_flow_key gen_ipv4_flow_key(__u32 src_ip, __u3
     return key;
 }
 
-static __always_inline struct initial_state gen_initial_state(__u32 state, __u32 protocol) {
+static __always_inline struct initial_state gen_initial_state(__u16 state, __u32 protocol) {
     struct initial_state new_state = {
         .state = state,
+        .fails = 0,
         .protocol = protocol,
     };
     return new_state;
