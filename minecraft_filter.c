@@ -366,6 +366,11 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
         return XDP_ABORTED;
     }
 
+     // Check if TCP destination port matches mc server port
+    if (tcp->dest != MINECRAFT_PORT) {
+        return XDP_PASS;  // not for our service
+    }
+    
     if (tcp->doff < 5) {
         return XDP_ABORTED;
     }
@@ -373,11 +378,6 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
     __u32 tcp_hdr_len = tcp->doff * 4;
     if ((void *)tcp + tcp_hdr_len > data_end) {
         return XDP_ABORTED;
-    }
-
-    // Check if TCP destination port matches mc server port
-    if (tcp->dest != MINECRAFT_PORT) {
-        return XDP_PASS;  // not for our service
     }
 
     // Additional TCP bypass checks for abnormal flags
