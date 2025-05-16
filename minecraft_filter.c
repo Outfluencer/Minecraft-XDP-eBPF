@@ -64,37 +64,41 @@ static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp) {
 // Read Minecraft varint
 static __always_inline __u32 read_varint_sized(__s8 *start, __s8 *end, __s32 *return_value, __u8 max_size) {
     // i don't do loops in ebf
-    if (max_size >= 1 && start + 1 <= end) {
-        __s8 first = start[0];
-        if ((first & 0x80) != 0x80) {
-            *return_value = first;
-            return 1;
-        } else if (max_size >= 2 && start + 2 <= end) {
-            __s8 second = start[1];
-            if ((second & 0x80) != 0x80) {
-                *return_value = (first & 0x7F) | ((second & 0x7F) << 7);
-                return 2;
-            } else if (max_size >= 3 && start + 3 <= end) {
-                __s8 third = start[2];
-                if ((third & 0x80) != 0x80) {
-                    *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14);
-                    return 3;
-                } else if (max_size >= 4 && start + 4 <= end) {
-                    __s8 fourth = start[3];
-                    if ((fourth & 0x80) != 0x80) {
-                        *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21);
-                        return 4;
-                    } else if (max_size >= 5 && start + 5 <= end) {
-                        __s8 fifth = start[4];
-                        if ((fifth & 0x80) != 0x80) {
-                            *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21) | ((fifth & 0x7F) << 28);
-                            return 5;
-                        }
-                    }      
-                }
-            }
-        }
+    if (max_size < 1 || start + 1 > end) return 0;
+    __s8 first = start[0];
+    if ((first & 0x80) == 0) {
+        *return_value = first;
+        return 1;
     }
+
+    if (max_size < 2 || start + 2 > end) return 0;
+    __s8 second = start[1];
+    if ((second & 0x80) == 0) {
+        *return_value = (first & 0x7F) | ((second & 0x7F) << 7);
+        return 2;
+    }
+
+    if (max_size < 3 || start + 3 > end) return 0;
+    __s8 third = start[2];
+    if ((third & 0x80) == 0) {
+        *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14);
+        return 3;
+    }
+
+    if (max_size < 4 || start + 4 > end) return 0;
+    __s8 fourth = start[3];
+    if ((fourth & 0x80) == 0) {
+        *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21);
+        return 4;
+    }
+
+    if (max_size < 5 || start + 5 > end) return 0;
+    __s8 fifth = start[4];
+    if ((fifth & 0x80) == 0) {
+        *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21) | ((fifth & 0x7F) << 28);
+        return 5;
+    }
+    // varint to big
     return 0;
 }
 
