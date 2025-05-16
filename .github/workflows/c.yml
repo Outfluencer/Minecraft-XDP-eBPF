@@ -17,6 +17,7 @@ jobs:
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-20/bin/clang++ 100
       - name: Build
         run: |
+          clang -version
           chmod +x ./build.sh
           ./build.sh
       - name: Upload xdp_loader artifact
