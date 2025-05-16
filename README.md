@@ -11,7 +11,8 @@ If a connection is dropped, the IP is blacklisted for 60 seconds — all new con
 The filter also has an integrated connection throttle: max 10 SYNs per 3 seconds.  
 
 # Install (Debian)
-The following command installs all dependencies (clang-20, xxd, gcc-multilib, libbpf-dev, git) and compiles the XDP loader:
+You can use the precompiled exceutable from the releases.
+Otherwise the following command installs all dependencies (clang-20, xxd, gcc-multilib, libbpf-dev, git) and compiles the XDP loader:
 ```
 curl -sSL https://outfluencer.dev/install-xdp.sh | bash
 ```
