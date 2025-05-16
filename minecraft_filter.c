@@ -14,12 +14,12 @@ const __u16 MINECRAFT_PORT = __constant_htons(25565);
 const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
 
 // length pre checks
-const __u32 MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
-const __u32 MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
-const __u32 MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
-const __u32 STATUS_REQUEST_LEN = 2;
-const __u32 PING_REQUEST_LEN = 10;
-const __u32 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
+const __s64 MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
+const __s64 MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
+const __s64 MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
+const __s64 STATUS_REQUEST_LEN = 2;
+const __s64 PING_REQUEST_LEN = 10;
+const __s64 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -107,7 +107,7 @@ static __always_inline __u8 inspect_status_request(__s8 *start, __s8 *end) {
 // Check for valid login request packet
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
 static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 protocol_version) {
-    __u32 size = end - start;
+    __s64 size = end - start;
     if (size < MIN_LOGIN_LEN || size > MAX_LOGIN_LEN) return 0; 
 
     __s8 *reader_index = start;
@@ -240,14 +240,13 @@ static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 p
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
 static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __u16 tcp_dest) {
 
-    __u32 size = end - start;
-
     if (start + 1 <= end) {
         if (start[0] == (__s8)0xFE) {
             return RECEIVED_LEGACY_PING;
         }
     }
 
+    __s64 size = end - start;
     if (size > MAX_HANDSHAKE_LEN + MAX_LOGIN_LEN || size < MIN_HANDSHAKE_LEN) {
         return 0;
     }
