@@ -9,8 +9,12 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y clang-20 xxd gcc-multilib libbpf-dev
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
+          sudo apt install -y xxd gcc-multilib libbpf-dev wget gnupg software-properties-common
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 20 all
+          sudo update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-20/bin/clang 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-20/bin/clang++ 100
       - name: Build
         run: |
           chmod +x ./build.sh
