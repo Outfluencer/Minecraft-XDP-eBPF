@@ -17,7 +17,8 @@ const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
 const __u32 MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
 const __u32 MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
 const __u32 MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
-const __u32 PING_REQUEST_LEN = 10; // drop empty names instantly
+const __u32 STATUS_REQUEST_LEN = 2;
+const __u32 PING_REQUEST_LEN = 10;
 const __u32 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
 
 struct {
@@ -100,7 +101,7 @@ static __always_inline __u32 read_varint_sized(__s8 *start, __s8 *end, __s32 *re
 
 // Check for valid status request packet
 static __always_inline __u8 inspect_status_request(__s8 *start, __s8 *end) {
-    return start + 2 <= end && start[0] == 1 && start[1] == 0;
+    return start + 2 <= end && end - start == STATUS_REQUEST_LEN && start[0] == 1 && start[1] == 0;
 }
 
 // Check for valid login request packet
@@ -319,12 +320,7 @@ static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, 
 }
 
 static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end) {
-    if (end - start != PING_REQUEST_LEN) return 0; 
-
-    if (start + 1 < end) {
-        return start[0] == 9 && start[1] == 1;
-    } 
-    return 0;
+    return start + 1 <= end && end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
 }
 
 static __always_inline __s32 retransmission(struct initial_state *initial_state, __u32 *src_ip, struct ipv4_flow_key *flow_key, struct tcphdr *tcp) {
