@@ -15,6 +15,8 @@ jobs:
           sudo ./llvm.sh 20 all
           sudo update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-20/bin/clang 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-20/bin/clang++ 100
+          sudo update-alternatives --set clang /usr/lib/llvm-20/bin/clang
+          sudo update-alternatives --set clang++ /usr/lib/llvm-20/bin/clang++
       - name: Build
         run: |
           clang --version
