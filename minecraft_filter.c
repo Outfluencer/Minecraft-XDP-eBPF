@@ -319,7 +319,7 @@ static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, 
 }
 
 static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end) {
-    return start + 1 <= end && end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
+    return start + 2 <= end && end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
 }
 
 static __always_inline __s32 retransmission(struct initial_state *initial_state, __u32 *src_ip, struct ipv4_flow_key *flow_key, struct tcphdr *tcp) {
