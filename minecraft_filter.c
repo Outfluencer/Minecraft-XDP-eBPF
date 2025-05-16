@@ -138,100 +138,102 @@ static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 p
         return 0;
     }
 
-    if (reader_index + name_len_bytes <= end) {
-        reader_index += name_len_bytes;
-        if (reader_index + name_len <= end) {
-            reader_index += name_len;
-            // 1_19                                          1_19_3
-            if (protocol_version >= 759 && protocol_version < 761) {
-                if (reader_index + 1 <= end) {
-                    __s8 has_public_key = reader_index[0];
-                    reader_index++;
-                    if (has_public_key) {
-                        if (reader_index + 8 <= end) {
-                            reader_index += 8; // skip expiry time
-                            __s32 key_len;
-                            __u32 key_len_bytes = read_varint_sized(reader_index, end, &key_len, 2);
 
-                            // i hate this bpf verfier );, we can't merge this if's together
-                            if (!key_len_bytes) {
-                                return 0;
-                            };
-                            if (key_len < 0 || key_len > 512) {
-                                return 0;
-                            }
-    
-                            if (reader_index + key_len_bytes <= end) {
-                                reader_index += key_len_bytes;
-                                if (key_len >= 0 && reader_index + key_len <= end) {
-                                    reader_index += key_len;
-                                    __s32 signaturey_len;
-                                    __u32 signaturey_len_bytes = read_varint_sized(reader_index, end, &signaturey_len, 2);
-
-                                    // i hate this bpf verfier );, we can't merge this if's together
-                                    if (!signaturey_len_bytes) {
-                                        return 0;
-                                    };
-                                    if (signaturey_len < 0 || signaturey_len > 4096) {
-                                        return 0;
-                                    }
-                                    
-                                    if (reader_index + signaturey_len_bytes <= end) {
-                                        reader_index += signaturey_len_bytes;
-                                        if (reader_index + signaturey_len <= end) {
-                                            reader_index += signaturey_len;
-                                        }
-                                    } else {
-                                        return 0;
-                                    }
-                                }else {
-                                    return 0;
-                                }
-                            } else {
-                                return 0;
-                            }
-                        } else {
-                            return 0;
-                        }
-                    }
-                } else {
-                    return 0;
-                }
-            }
-            //  1_19_1
-            if (protocol_version >= 760) {
-                // 1_20_2
-                if (protocol_version >= 764) {
-                    // check space for uuid
-                    if (reader_index + 16 <= end) {
-                        reader_index += 16;
-                    } else {
-                        return 0;
-                    }
-                } else {
-                    // check space for uuid and boolean
-                    if (reader_index + 1 <= end) {
-                        __s8 has_uuid = reader_index[0];
-                        reader_index++;
-                        if(has_uuid) {
-                            if (reader_index + 16 <= end) {
-                                reader_index += 16;
-                            } else {
-                                return 0;
-                            }
-                        }
-                    } else {
-                        return 0;
-                    }
-                }
-            }
-        }else {
-            return 0;
-        }
-    } else {
+    if (reader_index + name_len_bytes > end) {
         return 0;
     }
 
+    reader_index += name_len_bytes;
+    if(reader_index + name_len > end) {
+        return 0;
+    }
+    reader_index += name_len;
+    // 1_19                                          1_19_3
+    if (protocol_version >= 759 && protocol_version < 761) {
+        if (reader_index + 1 <= end) {
+            __s8 has_public_key = reader_index[0];
+            reader_index++;
+            if (has_public_key) {
+                if ( reader_index + 8 > end) {
+                    return 0;
+                }
+                reader_index += 8; // skip expiry time
+                __s32 key_len;
+                __u32 key_len_bytes = read_varint_sized(reader_index, end, &key_len, 2);
+                // i hate this bpf verfier );, we can't merge this if's together
+                if (!key_len_bytes) {
+                    return 0;
+                };
+                if (key_len < 0) {
+                    return 0;
+                }
+                __u32 key_lenu = (__u32) key_len;
+
+                if (key_lenu > 512) {
+                    return 0;
+                }
+
+                if(reader_index + key_len_bytes > end) {
+                    return 0;
+                }
+
+                reader_index += key_len_bytes;
+                
+                if( reader_index + key_lenu > end) {
+                    return 0;
+                }
+                reader_index += key_lenu;
+                __s32 signaturey_len;
+                __u32 signaturey_len_bytes = read_varint_sized(reader_index, end, &signaturey_len, 2);
+
+                // i hate this bpf verfier );, we can't merge this if's together
+                if (!signaturey_len_bytes) {
+                    return 0;
+                };
+                if (signaturey_len < 0) {
+                    return 0;
+                }
+                __u32 signaturey_lenu = (__u32) signaturey_len;
+                if (signaturey_lenu > 4096) {
+                    return 0;
+                }
+                if(reader_index + signaturey_len_bytes > end) {
+                    return 0;
+                }
+                reader_index += signaturey_len_bytes;
+                if (reader_index + signaturey_lenu > end) {
+                    return 0;
+                }
+                reader_index += signaturey_lenu;
+            }
+        } else {
+            return 0;
+        }
+    }
+    //  1_19_1
+    if (protocol_version >= 760) {
+        // 1_20_2
+        if (protocol_version >= 764) {
+            // check space for uuid
+            if (reader_index + 16 > end) {
+                return 0;
+            }
+            reader_index += 16;
+        } else {
+            // check space for uuid and boolean
+            if (reader_index + 1 > end) {
+                return 0;
+            }
+            __s8 has_uuid = reader_index[0];
+            reader_index++;
+            if(has_uuid) {
+                if (reader_index + 16 > end) {
+                    return 0;
+                }
+                reader_index += 16;
+            }
+        }
+    }
     // no data left to read, this is a valid login packet
     return reader_index == end;
 }
