@@ -242,7 +242,7 @@ static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 p
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __u16 tcp_dest) {
+static __always_inline __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __u16 tcp_dest) {
 
     if (start + 1 <= end) {
         if (start[0] == (__s8)0xFE) {
