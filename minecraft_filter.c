@@ -328,13 +328,13 @@ static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end) {
     return start + 2 <= end && end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
 }
 
-static __always_inline __s32 retransmission(struct initial_state *initial_state, __u32 *src_ip, struct ipv4_flow_key *flow_key, struct tcphdr *tcp) {
+static __always_inline __s32 retransmission(struct initial_state *initial_state, __u32 *src_ip, struct ipv4_flow_key *flow_key) {
     if (++initial_state->fails > MAX_RETRANSMISSION) {
         __u64 now = bpf_ktime_get_ns();
         bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
-        bpf_map_delete_elem(&conntrack_map, &flow_key);
+        bpf_map_delete_elem(&conntrack_map, flow_key);
     } else {
-        bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY);    
+        bpf_map_update_elem(&conntrack_map, flow_key, initial_state, BPF_ANY);    
     }
     return XDP_DROP;
 }
@@ -476,7 +476,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             // if the first packet has invalid length, we can block it
             // even with retransmition this len should always be valid‚
             if (!next_state) {
-                return retransmission(initial_state, &src_ip, &flow_key, tcp);
+                return retransmission(initial_state, &src_ip, &flow_key);
             }
 
             if (next_state == RECEIVED_LEGACY_PING) { // fully drop legacy ping
@@ -504,7 +504,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             }
         } else if (state == AWAIT_STATUS_REQUEST) {
             if(!inspect_status_request(tcp_payload, tcp_payload_end)) {
-                return retransmission(initial_state, &src_ip, &flow_key, tcp);
+                return retransmission(initial_state, &src_ip, &flow_key);
             }
             initial_state->state = AWAIT_PING;
             if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY) < 0) {
@@ -513,7 +513,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             }
         } else if (state == AWAIT_PING) {
             if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
-                return retransmission(initial_state, &src_ip, &flow_key, tcp);
+                return retransmission(initial_state, &src_ip, &flow_key);
             }
             initial_state->state = PING_COMPLETE;
             if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY) < 0) {
@@ -522,7 +522,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             }
         } else if (state == AWAIT_LOGIN) {
             if(!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol)) {
-                return retransmission(initial_state, &src_ip, &flow_key, tcp);
+                return retransmission(initial_state, &src_ip, &flow_key);
             }
             __u64 now = bpf_ktime_get_ns();
 
