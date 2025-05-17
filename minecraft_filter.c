@@ -104,13 +104,13 @@ static __always_inline __u32 read_varint_sized(__s8 *start, __s8 *end, __s32 *re
 
 
 // Check for valid status request packet
-static __always_inline __u8 inspect_status_request(__s8 *start, __s8 *end) {
-    return start + 2 <= end && end - start == STATUS_REQUEST_LEN && start[0] == 1 && start[1] == 0;
+static __always_inline __u8 inspect_status_request(__s8 *start, __s8 *end, __s8 *packet_end) {
+    return start + 2 <= end && packet_end - start == STATUS_REQUEST_LEN && start[0] == 1 && start[1] == 0;
 }
 
 // Check for valid login request packet
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
-static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 protocol_version) {
+static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 protocol_version, __s8 *packet_end) {
     __s64 size = end - start;
     if (size < MIN_LOGIN_LEN || size > MAX_LOGIN_LEN) return 0; 
 
@@ -235,7 +235,7 @@ static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 p
         }
     }
     // no data left to read, this is a valid login packet
-    return reader_index == end;
+    return reader_index == packet_end;
 }
 
 
@@ -244,7 +244,7 @@ static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 p
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-static __always_inline __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __u16 tcp_dest) {
+static __always_inline __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __u16 tcp_dest, __s8 *packet_end) {
 
     if (start + 1 <= end) {
         if (start[0] == (__s8)0xFE) {
@@ -305,17 +305,17 @@ static __always_inline __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *pr
     reader_index += intention_bytes;
 
     // this packet contained exactly the handshake
-    if (reader_index == end) {
+    if (reader_index == packet_end) {
         return intention == 1 ? AWAIT_STATUS_REQUEST : AWAIT_LOGIN;
     } 
     
     if (intention == 1) {
         // the packet also contained the staus request
-        if (inspect_status_request(reader_index, end)) {
+        if (inspect_status_request(reader_index, end, packet_end)) {
             return AWAIT_PING;
         }
     } else {
-        if (inspect_login_packet(reader_index, end, *protocol_version)) {
+        if (inspect_login_packet(reader_index, end, *protocol_version, packet_end)) {
             // we received login here we have to disable the filter
             return LOGIN_FINISHED;
         }
@@ -324,8 +324,8 @@ static __always_inline __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *pr
     return 0;
 }
 
-static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end) {
-    return start + 2 <= end && end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
+static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end, __s8 *packet_end) {
+    return start + 2 <= end && packet_end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
 }
 
 static __always_inline __s32 retransmission(struct initial_state *initial_state, __u32 *src_ip, struct ipv4_flow_key *flow_key) {
@@ -362,7 +362,8 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    struct tcphdr *tcp = data + sizeof(struct ethhdr) + (ip->ihl * 4);
+    __u16 ip_hdr_len = ip->ihl * 4;
+    struct tcphdr *tcp = data + sizeof(struct ethhdr) + ip_hdr_len;
     if ((void *)(tcp + 1) > data_end) {
         return XDP_ABORTED;
     }
@@ -459,8 +460,16 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
         }
     }
 
-    __s8 *tcp_payload = (__s8 *)((__u8 *)tcp + (tcp->doff * 4));
+    __s8 *tcp_payload = (__s8 *)((__u8 *)tcp + ip_hdr_len);
     __s8 *tcp_payload_end = (__s8 *) data_end;
+
+    __u16 ip_total_len = __builtin_bswap16(ip->tot_len);
+
+    // Check: sind IP-Header und TCP-Header im IP-Paket enthalten?
+    __u16 tcp_payload_len = ip_total_len - ip_hdr_len - tcp_hdr_len;
+
+    __s8 *packet_end = tcp_payload + tcp_payload_len;
+
 
     if (tcp_payload < tcp_payload_end) {
 
@@ -472,7 +481,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
 
         if (state == AWAIT_MC_HANDSHAKE) {
             __s32 protocol_version = 0;
-            __u32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest);
+            __u32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest, packet_end);
             // if the first packet has invalid length, we can block it
             // even with retransmition this len should always be valid‚
             if (!next_state) {
@@ -503,7 +512,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
                 }
             }
         } else if (state == AWAIT_STATUS_REQUEST) {
-            if(!inspect_status_request(tcp_payload, tcp_payload_end)) {
+            if(!inspect_status_request(tcp_payload, tcp_payload_end, packet_end)) {
                 return retransmission(initial_state, &src_ip, &flow_key);
             }
             initial_state->state = AWAIT_PING;
@@ -512,7 +521,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
                 return XDP_DROP;
             }
         } else if (state == AWAIT_PING) {
-            if(!inspect_ping_request(tcp_payload, tcp_payload_end)) {
+            if(!inspect_ping_request(tcp_payload, tcp_payload_end, packet_end)) {
                 return retransmission(initial_state, &src_ip, &flow_key);
             }
             initial_state->state = PING_COMPLETE;
@@ -521,7 +530,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
                 return XDP_DROP;
             }
         } else if (state == AWAIT_LOGIN) {
-            if(!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol)) {
+            if(!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol, packet_end)) {
                 return retransmission(initial_state, &src_ip, &flow_key);
             }
             __u64 now = bpf_ktime_get_ns();
