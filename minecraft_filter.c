@@ -460,7 +460,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
         }
     }
 
-    __s8 *tcp_payload = (__s8 *)((__u8 *)tcp + ip_hdr_len);
+    __s8 *tcp_payload = (__s8 *)((__u8 *)tcp + tcp_hdr_len);
     __s8 *tcp_payload_end = (__s8 *) data_end;
 
     __u16 ip_total_len = __builtin_bswap16(ip->tot_len);
