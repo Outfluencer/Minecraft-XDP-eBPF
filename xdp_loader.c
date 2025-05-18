@@ -228,7 +228,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("Loading minecraft xdp filter v1.3.1 by Outfluencer...\n");
+    printf("Loading minecraft xdp filter v1.3.2 by Outfluencer...\n");
 
     if (signal(SIGINT, sigint_handler) == SIG_ERR && signal(SIGTERM, sigint_handler) == SIG_ERR && signal(SIGSEGV, sigint_handler) == SIG_ERR) {
         perror("Unable to set signal handler");
