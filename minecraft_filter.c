@@ -471,7 +471,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
     __s8 *packet_end = tcp_payload + tcp_payload_len;
 
 
-    if (tcp_payload < tcp_payload_end) {
+    if (tcp_payload < tcp_payload_end && tcp_payload < packet_end) {
 
         if (!tcp->ack) {
             // drop the connection
