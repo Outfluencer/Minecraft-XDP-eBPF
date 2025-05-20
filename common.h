@@ -29,8 +29,9 @@ struct initial_state {
     __u16 state;
     __u16 fails;
     __u32 protocol;
+    __u32 expected_sequence;
 };
-_Static_assert(sizeof(struct initial_state) == 8, "initial_state size mismatch!");
+_Static_assert(sizeof(struct initial_state) == 12, "initial_state size mismatch!");
 
 
 static __always_inline struct ipv4_flow_key gen_ipv4_flow_key(__u32 src_ip, __u32 dst_ip, __u16 src_port, __u16 dst_port) {
@@ -43,11 +44,12 @@ static __always_inline struct ipv4_flow_key gen_ipv4_flow_key(__u32 src_ip, __u3
     return key;
 }
 
-static __always_inline struct initial_state gen_initial_state(__u16 state, __u32 protocol) {
+static __always_inline struct initial_state gen_initial_state(__u16 state, __u32 protocol, __u32 expected_sequence) {
     struct initial_state new_state = {
         .state = state,
         .fails = 0,
         .protocol = protocol,
+        .expected_sequence = expected_sequence,
     };
     return new_state;
 }

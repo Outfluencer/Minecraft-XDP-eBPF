@@ -423,7 +423,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             return XDP_DROP; // drop, we already have a connection
         }
         // it's a valid new SYN, create a new flow entry
-        struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0);
+        struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, __builtin_bswap32(tcp->seq) + 1);
         if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY) < 0) {
             return XDP_DROP;
         }
@@ -450,7 +450,8 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
 
     __u32 state = initial_state->state;
     if (state == AWAIT_ACK) {
-        if (!tcp->ack) {
+        // not an ack or invalid ack number
+        if (!tcp->ack || initial_state->expected_sequence != __builtin_bswap32(tcp->seq)) {
             return XDP_DROP;
         }
         initial_state->state = state = AWAIT_MC_HANDSHAKE;
@@ -458,6 +459,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             // we could not update the value we need to drop.
             return XDP_DROP;
         }
+        return XDP_PASS;
     }
 
     __s8 *tcp_payload = (__s8 *)((__u8 *)tcp + tcp_hdr_len);
@@ -479,6 +481,10 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             return XDP_DROP;
         }
 
+        if (initial_state->expected_sequence != __builtin_bswap32(tcp->seq)) {
+            return retransmission(initial_state, &src_ip, &flow_key);
+        }
+
         if (state == AWAIT_MC_HANDSHAKE) {
             __s32 protocol_version = 0;
             __u32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest, packet_end);
@@ -495,6 +501,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
 
             initial_state->state = next_state;
             initial_state->protocol = protocol_version;
+            initial_state->expected_sequence += tcp_payload_len;
 
             // handshake & login/status
             if (next_state == LOGIN_FINISHED) {
@@ -516,6 +523,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
                 return retransmission(initial_state, &src_ip, &flow_key);
             }
             initial_state->state = AWAIT_PING;
+            initial_state->expected_sequence += tcp_payload_len;
             if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY) < 0) {
                 // could not update the value, we need to drop and hope it works next time
                 return XDP_DROP;
@@ -525,6 +533,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
                 return retransmission(initial_state, &src_ip, &flow_key);
             }
             initial_state->state = PING_COMPLETE;
+            initial_state->expected_sequence += tcp_payload_len;
             if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY) < 0) {
                 // could not update the value, we need to drop and hope it works next time
                 return XDP_DROP;
@@ -546,6 +555,8 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
         } else {
             // should never happen
         }
+    } else {
+        //bpf_printk("no payload seq %lu, ack %lu", __builtin_bswap32(tcp->seq), __builtin_bswap32(tcp->ack_seq));
     }
 
     return XDP_PASS;
