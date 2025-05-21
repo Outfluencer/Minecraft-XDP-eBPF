@@ -1,7 +1,7 @@
 #include <linux/types.h>
 
 // maximum amount of retransmission packets before blocking
-#define MAX_RETRANSMISSION 20
+#define MAX_OUT_OF_ORDER 4
 
 // STATE TRACKING
 #define AWAIT_ACK 1
