@@ -459,7 +459,8 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             // we could not update the value we need to drop.
             return XDP_DROP;
         }
-        return XDP_PASS;
+        // do not return here, the ack of the tcp handshake can contain application data
+        //return XDP_PASS;
     }
 
     __s8 *tcp_payload = (__s8 *)((__u8 *)tcp + tcp_hdr_len);
