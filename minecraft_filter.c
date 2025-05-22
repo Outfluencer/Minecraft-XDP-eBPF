@@ -111,8 +111,8 @@ static __always_inline __u8 inspect_status_request(__s8 *start, __s8 *end, __s8 
 // Check for valid login request packet
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
 static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 protocol_version, __s8 *packet_end) {
-    __s64 size = end - start;
-    if (size < MIN_LOGIN_LEN || size > MAX_LOGIN_LEN) return 0; 
+    __s64 size = packet_end - start;
+    if (size > MAX_LOGIN_LEN || size < MIN_LOGIN_LEN) return 0; 
 
     __s8 *reader_index = start;
     __s32 packet_len;
@@ -253,7 +253,7 @@ static __always_inline __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *pr
         }
     }
 
-    __s64 size = end - start;
+    __s64 size = packet_end - start;
     if (size > MAX_HANDSHAKE_LEN + MAX_LOGIN_LEN || size < MIN_HANDSHAKE_LEN) {
         return 0;
     }
@@ -510,13 +510,16 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
 
     __s8 *packet_end = tcp_payload + tcp_payload_len;
 
+    // tcp packet is split in multiple ethernet frames, we don't support that
+    if (packet_end > tcp_payload_end) {
+        return block_and_drop(&flow_key);
+    }
+
 
     if (tcp_payload < tcp_payload_end && tcp_payload < packet_end) {
 
         if (!tcp->ack) {
-            // drop the connection
-            bpf_map_delete_elem(&conntrack_map, &flow_key);
-            return XDP_DROP;
+            return block_and_drop(&flow_key);
         }
 
         // we fully track the tcp packet order with this check,
