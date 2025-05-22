@@ -134,10 +134,11 @@ static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 p
     if (!name_len_bytes) {
         return 0;
     };
+
+    // invalid username
     if (name_len > 16 * 3 || name_len < 1) {
         return 0;
     }
-
 
     if (reader_index + name_len_bytes > end) {
         return 0;
@@ -526,8 +527,7 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
         }
 
         if (state == AWAIT_MC_HANDSHAKE) {
-            __s32 protocol_version = 0;
-            __u32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &protocol_version, tcp->dest, packet_end);
+            __s32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &initial_state->protocol, tcp->dest, packet_end);
             // if the first packet has invalid length, we can block it
             // even with retransmition this len should always be valid‚
             if (!next_state) {
@@ -540,7 +540,6 @@ __s32 minecraft_filter(struct xdp_md *ctx) {
             }
 
             initial_state->state = next_state;
-            initial_state->protocol = protocol_version;
             initial_state->expected_sequence += tcp_payload_len;
             return next_state == LOGIN_FINISHED ? switch_to_verified(&flow_key) : update_state_or_drop(initial_state, &flow_key);
         } else if (state == AWAIT_STATUS_REQUEST) {

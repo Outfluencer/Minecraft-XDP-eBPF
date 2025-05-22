@@ -26,9 +26,9 @@ _Static_assert(sizeof(struct ipv4_flow_key) == 12, "ipv4_flow_key size mismatch!
 
 
 struct initial_state {
-    __u16 state;
-    __u16 fails;
-    __u32 protocol;
+    __u16 state; // in only need u8, but padding....
+    __u16 fails; // in only need u8, but padding....
+    __s32 protocol; // minecraft protocol versions are signed
     __u32 expected_sequence;
 };
 _Static_assert(sizeof(struct initial_state) == 12, "initial_state size mismatch!");
