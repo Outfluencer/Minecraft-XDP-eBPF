@@ -9,7 +9,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y xxd gcc-multilib libbpf-dev wget gnupg software-properties-common upx llvm
+          sudo apt install -y xxd gcc-multilib libbpf-dev wget gnupg software-properties-common upx llvm git
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 20 all
@@ -19,14 +19,19 @@ jobs:
           sudo update-alternatives --set clang++ /usr/lib/llvm-20/bin/clang++
           sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/lib/llvm-20/bin/llvm-strip 100
           sudo update-alternatives --set llvm-strip /usr/lib/llvm-20/bin/llvm-strip
+          sudo git clone --recursive --branch devel https://github.com/upx/upx.git
+          cd upx
+          sudo make -j$(nproc)
+          sudo build/release/cp upx /usr/local/bin/
       - name: Build
         run: |
           clang --version
           chmod +x ./build.sh
           ./build.sh
-      - name: compress
+      - name: Compress
         run: |
-           upx --best --lzma xdp_loader
+           upx --version
+           upx --all-methods xdp_loader
       - name: Upload xdp_loader artifact
         uses: actions/upload-artifact@v4
         with:
