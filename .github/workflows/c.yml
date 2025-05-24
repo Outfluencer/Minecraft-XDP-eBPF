@@ -22,7 +22,7 @@ jobs:
           sudo git clone --recursive --branch devel https://github.com/upx/upx.git
           cd upx
           sudo make -j$(nproc)
-          sudo build/release/cp upx /usr/local/bin/
+          sudo cp build/release/upx /usr/local/bin/
       - name: Build
         run: |
           clang --version
