@@ -62,8 +62,11 @@ static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp) {
 }
 
 // Read Minecraft varint
-static __always_inline __u32 read_varint_sized(__s8 *start, __s8 *end, __s32 *return_value, __u8 max_size) {
+__attribute__((noinline))
+static __u32 read_varint_sized(__s8 *start, __s8 *end, __s32 *return_value, __u8 max_size) {
     // i don't do loops in ebf
+    if (start > end) return 0;
+
     if (max_size < 1 || start + 1 > end) return 0;
     __s8 first = start[0];
     if ((first & 0x80) == 0) {
