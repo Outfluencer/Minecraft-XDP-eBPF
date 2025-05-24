@@ -113,7 +113,8 @@ static __always_inline __u8 inspect_status_request(__s8 *start, __s8 *end, __s8 
 
 // Check for valid login request packet
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
-static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 protocol_version, __s8 *packet_end) {
+__attribute__((noinline))
+static __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 protocol_version, __s8 *packet_end) {
     __s64 size = packet_end - start;
     if (size > MAX_LOGIN_LEN || size < MIN_LOGIN_LEN) return 0; 
 
@@ -248,7 +249,8 @@ static __always_inline __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 p
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-static __always_inline __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __u16 tcp_dest, __s8 *packet_end) {
+__attribute__((noinline))
+static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __u16 tcp_dest, __s8 *packet_end) {
 
     if (start + 1 <= end) {
         if (start[0] == (__s8)0xFE) {
@@ -332,11 +334,10 @@ static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end, __s8 *p
     return start + 2 <= end && packet_end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
 }
 
-
 /*
  * Blocks the ip iü of the connection and drops the packet
  */
-static __always_inline __s32 block_and_drop(struct ipv4_flow_key *flow_key) {
+static __s32 block_and_drop(struct ipv4_flow_key *flow_key) {
     __u64 now = bpf_ktime_get_ns();
     __u32 src_ip = flow_key->src_ip;
     bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);    
@@ -346,7 +347,7 @@ static __always_inline __s32 block_and_drop(struct ipv4_flow_key *flow_key) {
 /*
  * Out of order tcp data, drop or block if to many
  */
-static __always_inline __s32 out_of_order(struct initial_state *initial_state, struct ipv4_flow_key *flow_key) {
+static __s32 out_of_order(struct initial_state *initial_state, struct ipv4_flow_key *flow_key) {
     if (++initial_state->fails > MAX_OUT_OF_ORDER) {
         return block_and_drop(flow_key);
     }
@@ -358,7 +359,7 @@ static __always_inline __s32 out_of_order(struct initial_state *initial_state, s
  * Tries to update the initial state
  * If unsuccessfull drops the packet, otherwise pass
  */
-static __always_inline __s32 update_state_or_drop(struct initial_state *initial_state, struct ipv4_flow_key *flow_key) {
+static __s32 update_state_or_drop(struct initial_state *initial_state, struct ipv4_flow_key *flow_key) {
     if (bpf_map_update_elem(&conntrack_map, flow_key, initial_state, BPF_ANY) < 0) {
         // could not update the value, we need to drop and hope it works next time
         return XDP_DROP;
@@ -370,7 +371,7 @@ static __always_inline __s32 update_state_or_drop(struct initial_state *initial_
  * Removes connection from initial map and puts it into the player map
  * No more packets of this connection will be checked now
  */
-static __always_inline __u32 switch_to_verified(struct ipv4_flow_key *flow_key) {
+static __u32 switch_to_verified(struct ipv4_flow_key *flow_key) {
     bpf_map_delete_elem(&conntrack_map, flow_key);
      __u64 now = bpf_ktime_get_ns();
     if (bpf_map_update_elem(&player_connection_map, flow_key, &now, BPF_ANY) < 0) {
