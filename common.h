@@ -13,10 +13,10 @@
 #define PING_COMPLETE 7
 #define LOGIN_FINISHED 8 // disables filter
 
-
 #define SECOND_TO_NANOS 1000000000ULL
 
-struct ipv4_flow_key {
+struct ipv4_flow_key
+{
     __u32 src_ip;
     __u32 dst_ip;
     __u16 src_port;
@@ -24,27 +24,27 @@ struct ipv4_flow_key {
 };
 _Static_assert(sizeof(struct ipv4_flow_key) == 12, "ipv4_flow_key size mismatch!");
 
-
-struct initial_state {
-    __u16 state; // in only need u8, but padding....
-    __u16 fails; // in only need u8, but padding....
+struct initial_state
+{
+    __u16 state;    // we only need u8, but padding....
+    __u16 fails;    // we only need u8, but padding....
     __s32 protocol; // minecraft protocol versions are signed
     __u32 expected_sequence;
 };
 _Static_assert(sizeof(struct initial_state) == 12, "initial_state size mismatch!");
 
-
-static __always_inline struct ipv4_flow_key gen_ipv4_flow_key(__u32 src_ip, __u32 dst_ip, __u16 src_port, __u16 dst_port) {
+static __always_inline struct ipv4_flow_key gen_ipv4_flow_key(__u32 src_ip, __u32 dst_ip, __u16 src_port, __u16 dst_port)
+{
     struct ipv4_flow_key key = {
         .src_ip = src_ip,
         .dst_ip = dst_ip,
         .src_port = src_port,
-        .dst_port = dst_port
-    };
+        .dst_port = dst_port};
     return key;
 }
 
-static __always_inline struct initial_state gen_initial_state(__u16 state, __u32 protocol, __u32 expected_sequence) {
+static __always_inline struct initial_state gen_initial_state(__u16 state, __u32 protocol, __u32 expected_sequence)
+{
     struct initial_state new_state = {
         .state = state,
         .fails = 0,
