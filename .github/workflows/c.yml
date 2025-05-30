@@ -19,19 +19,11 @@ jobs:
           sudo update-alternatives --set clang++ /usr/lib/llvm-20/bin/clang++
           sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/lib/llvm-20/bin/llvm-strip 100
           sudo update-alternatives --set llvm-strip /usr/lib/llvm-20/bin/llvm-strip
-          sudo git clone --recursive --branch devel https://github.com/upx/upx.git
-          cd upx
-          sudo make -j$(nproc)
-          sudo cp build/release/upx /usr/local/bin/
       - name: Build
         run: |
           clang --version
           chmod +x ./build.sh
           ./build.sh
-      - name: Compress
-        run: |
-           upx --version
-           upx --all-methods xdp_loader
       - name: Upload xdp_loader artifact
         uses: actions/upload-artifact@v4
         with:
