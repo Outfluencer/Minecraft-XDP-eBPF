@@ -1,4 +1,4 @@
-name: sh Build
+name: build xdp filter
 on: [push, pull_request]
 jobs:
   build:
