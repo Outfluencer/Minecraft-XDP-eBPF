@@ -124,7 +124,7 @@ void sigint_handler(int sig)
     }
 }
 
-void *clear_throttle(void *arg)
+void *clear_throttle()
 {
     __u64 ticks = 0;
     while (running)
@@ -163,7 +163,7 @@ void *clear_throttle(void *arg)
     return NULL;
 }
 
-void *clear_old_connections(void *arg)
+void *clear_old_connections()
 {
     __u64 ticks = 0;
     while (running)
@@ -213,7 +213,7 @@ void *clear_old_connections(void *arg)
     return NULL;
 }
 
-void *clear_blocked_ips(void *arg)
+void *clear_blocked_ips()
 {
     __u64 ticks = 0;
     while (running)
