@@ -12,14 +12,9 @@ The filter also has an integrated connection throttle: max 10 SYNs per 3 seconds
 
 # Install (Debian)
 You can use the precompiled exceutable from the releases.
-Otherwise the following command installs all dependencies (clang-20, xxd, gcc-multilib, libbpf-dev, git) and compiles the XDP loader:
-```
-curl -sSL https://outfluencer.dev/install-xdp.sh | bash
-```
-After that the xdp_loader file should be in the Minecraft-XDP-eBPF directory
-
-You can also install the libs on your own and just run `./build.sh`  
-After this you can run the loader with `./xdp_loader <network interface>`  
+Or you install the libs on your own and just run `./build.sh`  
+After that the xdp_loader file should be in the `Minecraft-XDP-eBPF/target/release` directory
+Then you can run the loader with `./xdp_loader <network interface>`  
 Note: This project uses a persistent XDP userspace loader to maintain connection state and manage eBPF maps. Exiting the loader will unload the firewall.  
 
 Test server with the filter: dev.outfluencer.dev  
