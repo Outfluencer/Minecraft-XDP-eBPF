@@ -19,7 +19,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt update
-        sudo apt install -y xxd gcc-multilib libbpf-dev wget gnupg software-properties-common git
+        sudo apt install -y gcc-multilib wget gnupg software-properties-common git
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         sudo ./llvm.sh 20 all
@@ -33,7 +33,6 @@ jobs:
       run: |
         clang --version
         ls -la
-        ls -la c
         cd c
         chmod +x ./build.sh
         ./build.sh
