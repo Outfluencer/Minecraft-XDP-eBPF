@@ -1,8 +1,9 @@
 # VSCode settings
 .vscode/
-
+.github/
 # Build output
 build/
+target/
 *.o
 *.elf
 *.so
