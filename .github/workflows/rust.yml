@@ -24,15 +24,10 @@ jobs:
         sudo update-alternatives --set clang++ /usr/lib/llvm-20/bin/clang++
         sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/lib/llvm-20/bin/llvm-strip 100
         sudo update-alternatives --set llvm-strip /usr/lib/llvm-20/bin/llvm-strip
-    - name: Build bpf
+    - name: Build
       run: |
-        clang --version
-        cd c
-        chmod +x ./build.sh
+        chmod +x build.sh
         ./build.sh
-    - name: Build rust loader
-      run: |
-        cargo build --verbose --release
     - name: Upload xdp_loader artifact
       uses: actions/upload-artifact@v4
       with:
