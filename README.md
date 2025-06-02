@@ -11,9 +11,9 @@ If a connection is dropped, the IP is blacklisted for 60 seconds — all new con
 The filter also has an integrated connection throttle: max 10 SYNs per 3 seconds.  
 
 # Install (Debian)
-You can use the precompiled exceutable from the releases.
+You can use the precompiled exceutable from the releases.  
 Or you install the libs on your own and just run `./build.sh`  
-After that the xdp_loader file should be in the `Minecraft-XDP-eBPF/target/release` directory
+After that the xdp_loader file should be in the `Minecraft-XDP-eBPF/target/release` directory  
 Then you can run the loader with `./xdp_loader <network interface>`  
 Note: This project uses a persistent XDP userspace loader to maintain connection state and manage eBPF maps. Exiting the loader will unload the firewall.  
 
