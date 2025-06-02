@@ -32,7 +32,8 @@ jobs:
     - name: Build C
       run: |
         clang --version
-        ls
+        ls -la
+        ls -la c
         cd c
         chmod +x ./build.sh
         ./build.sh
