@@ -1,5 +1,4 @@
-name: RustAdd commentMore actions
-
+name: Rust
 on:
   push:
     branches: [ "main" ]
