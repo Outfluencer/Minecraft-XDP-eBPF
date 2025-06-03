@@ -8,7 +8,7 @@ The default port for filtering is 25565.
 # What does the filter do
 The filter analyzes Minecraft handshakes, status, ping, and login requests, and drops invalid connections.  
 If a connection is dropped, the IP is blacklisted for 60 seconds — all new connections from that IP will be dropped.  
-The filter also has an integrated connection throttle: max 10 SYNs per 3 seconds.  
+The filter also has an integrated connection throttle: max 10 SYNs per 3 seconds per ip address.  
 
 # Install (Linux)
 You can use the precompiled exceutable from the releases.  
