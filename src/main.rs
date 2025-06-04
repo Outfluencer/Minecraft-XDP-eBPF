@@ -210,5 +210,5 @@ fn spawn_block_clear(name: &'static str, running: Arc<AtomicBool>, condvar: Arc<
 }
 
 fn boot_time_nanos() -> u64 {
-    System::uptime() * 1_000_000_000
+    System::uptime() * SECOND_TO_NANOS
 }
