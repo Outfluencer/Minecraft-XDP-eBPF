@@ -15,7 +15,6 @@ unsafe impl Pod for Ipv4FlowKey {}
 // Compile-time check: size == 12 bytes
 const _: () = assert!(std::mem::size_of::<Ipv4FlowKey>() == 12);
 
-
 pub fn network_address_to_string(ip: u32) -> String {
     std::net::Ipv4Addr::from(ip.swap_bytes()).to_string()
 }
