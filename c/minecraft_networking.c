@@ -11,8 +11,8 @@ const __s64 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // le
 // Read Minecraft varint
 __attribute__((noinline)) static __u32 read_varint_sized(__s8 *start, __s8 *end, __s32 *return_value, __u8 max_size)
 {
-    // i don't do loops in ebf
-    if (start > end)
+    // instant return if read already on the end
+    if (start >= end)
         return 0;
 
     if (max_size < 1 || start + 1 > end)
@@ -175,7 +175,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__s8 *start, __s8 *en
                 if (!signaturey_len_bytes)
                 {
                     return 0;
-                };
+                }
                 if (signaturey_len < 0)
                 {
                     return 0;
