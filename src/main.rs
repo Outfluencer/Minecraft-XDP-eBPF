@@ -352,7 +352,7 @@ fn uptime_nanos() -> Result<u64, anyhow::Error> {
     };
     let res = unsafe { clock_gettime(CLOCK_BOOTTIME, &mut ts) };
     if res == 0 {
-        Ok((ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64))
+        Ok((ts.tv_sec as u64) * SECOND_TO_NANOS + (ts.tv_nsec as u64))
     } else {
         Err(anyhow::anyhow!("Failed to get uptime"))
     }
