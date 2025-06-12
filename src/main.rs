@@ -56,7 +56,7 @@ fn main() {
     }
     env_logger::init();
 
-    info!("Loading minecraft xdp filter v1.5 by Outfluencer...");
+    info!("Loading minecraft xdp filter v1.6 by Outfluencer...");
 
     let running = Arc::new(AtomicBool::new(true));
     let condvar = Arc::new(Condvar::new());
