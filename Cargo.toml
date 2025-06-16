@@ -10,7 +10,7 @@ env_logger = { version = "0.11.8", default-features = false, features = ["auto-c
 log = "0.4.27"
 signal-hook = "0.3.18"
 anyhow = "1.0.98"
-libc = "0.2.172"
+libc = "0.2.173"
 
 [profile.release]
 opt-level = 3
