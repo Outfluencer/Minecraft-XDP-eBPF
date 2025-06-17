@@ -7,10 +7,21 @@
 #include <bpf/bpf_helpers.h>
 #include "common.h"
 #include "minecraft_networking.c"
+
+#ifndef HIT_COUNT
 #define HIT_COUNT 10
+#endif
+
+// make ports configurable during compilation
+#ifndef START_PORT
+#define START_PORT 25565
+#endif
+
+#ifndef END_PORT
+#define END_PORT 25565
+#endif
 
 // Minecraft server port
-const __u16 MINECRAFT_PORT = __constant_htons(25565);
 const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
 
 struct
@@ -148,10 +159,19 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     }
 
     // Check if TCP destination port matches mc server port
-    if (tcp->dest != MINECRAFT_PORT)
+    __u16 dest_port = __builtin_bswap16(tcp->dest);
+
+    #if START_PORT == END_PORT
+    if (dest_port != START_PORT)
     {
         return XDP_PASS; // not for our service
     }
+    #else
+    if (dest_port < START_PORT || dest_port > END_PORT)
+    {
+        return XDP_PASS; // not for our service
+    }
+    #endif
 
     if (tcp->doff < 5)
     {
