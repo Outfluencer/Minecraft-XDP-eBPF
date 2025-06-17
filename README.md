@@ -22,3 +22,8 @@ Test server with the filter: dev.outfluencer.dev
 ⭐ Don't forget to star the project!
 
 https://youtu.be/Tq8QHJAMhRc
+
+#  Configuration
+The default protected ports are 25000 to 26000, if you want to change that,  
+fully remove the arguments from the /c/build.sh file or change them to the port range you need.  
+Then recompile the project. The xdp filter will now filter on the specified port range or on 25565 if nothing is specified.  
