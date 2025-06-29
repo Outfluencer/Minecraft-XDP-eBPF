@@ -5,8 +5,9 @@ use aya::{
     programs::{Xdp, XdpFlags},
 };
 use common::Ipv4FlowKey;
+use env_logger::{Builder, Env};
 use libc::{CLOCK_BOOTTIME, clock_gettime, timespec};
-use log::{error, info};
+use log::{debug, error, info};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Signals;
 use std::{
@@ -54,7 +55,9 @@ fn main() {
         println!(include_str!("../LICENSE"));
         return;
     }
-    env_logger::init();
+    Builder::from_env(Env::default())
+        .format_timestamp_secs()
+        .init();
 
     info!("Loading minecraft xdp filter v1.6 by Outfluencer...");
 
@@ -134,7 +137,7 @@ fn load(
     };
     let blocked_ips_ref: Arc<Mutex<HashMap<MapData, u32, u64>>> = Arc::new(Mutex::new(blocked_ips));
 
-    let handle1 = spawn_connection_clear(
+    let handle1 = spawn_old_connection_clear(
         "clear-old",
         running.clone(),
         condvar.clone(),
@@ -212,7 +215,7 @@ fn connection_throttle_clear(
     Ok(())
 }
 
-fn spawn_connection_clear(
+fn spawn_old_connection_clear(
     name: &'static str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
@@ -239,6 +242,8 @@ fn clear_old_connections(
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
         let now = uptime_nanos()?;
+        debug!("Checking for old connections... {:?}", now);
+        let mut amount = 0;
         let mut map = player_connection_map_ref
             .lock()
             .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
@@ -246,6 +251,7 @@ fn clear_old_connections(
         let to_remove = map
             .iter()
             .filter_map(|res| {
+                amount += 1;
                 match res {
                     Ok((key, last_update)) => {
                         if last_update + (OLD_CONNECTION_TIMEOUT * SECOND_TO_NANOS) < now {
@@ -259,6 +265,9 @@ fn clear_old_connections(
             })
             .collect::<Vec<Ipv4FlowKey>>();
 
+        debug!("Map had {} entries now {} will be removed... {:?}", amount, to_remove.len(), now);
+
+
         to_remove.iter().for_each(|key| {
             let result = map.remove(key);
             if result.is_err() {
@@ -267,6 +276,8 @@ fn clear_old_connections(
                     common::flow_key_to_string(key),
                     result.err()
                 );
+            } else {
+                debug!("Removed old connection: {}", common::flow_key_to_string(key));
             }
         });
 
