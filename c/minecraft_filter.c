@@ -21,6 +21,14 @@
 #define END_PORT 25565
 #endif
 
+#ifndef BLOCK_IPS
+#define BLOCK_IPS 1
+#endif
+
+#ifndef CONNECTION_THROTTLE
+#define CONNECTION_THROTTLE 1
+#endif
+
 // Minecraft server port
 const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
 
@@ -71,14 +79,16 @@ static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp)
 }
 
 /*
- * Blocks the ip iü of the connection and drops the packet
+ * Blocks the ip if of the connection and drops the packet
  */
 static __s32 block_and_drop(struct ipv4_flow_key *flow_key)
 {
+    #if BLOCK_IPS
     __u64 now = bpf_ktime_get_ns();
     __u32 src_ip = flow_key->src_ip;
     bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);
     bpf_map_delete_elem(&conntrack_map, flow_key);
+    #endif
     return XDP_DROP;
 }
 /*
@@ -196,12 +206,15 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     if (tcp->syn)
     {
         // drop syn's of new connections if blocked
+        #if BLOCK_IPS
         __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
         if (blocked)
         {
             return XDP_DROP;
         }
+        #endif
 
+        #if CONNECTION_THROTTLE
         // connection throttle
         // 10 connection per ip per 3 seconds, otherwise drop
         __u32 *hit_counter = bpf_map_lookup_elem(&connection_throttle, &src_ip);
@@ -226,6 +239,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 return XDP_DROP;
             }
         }
+        #endif
 
         struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
         struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
