@@ -126,7 +126,7 @@ static __u32 switch_to_verified(struct ipv4_flow_key *flow_key)
 {
     bpf_map_delete_elem(&conntrack_map, flow_key);
     __u64 now = bpf_ktime_get_ns();
-    if (bpf_map_update_elem(&player_connection_map, flow_key, &now, BPF_ANY) < 0)
+    if (bpf_map_update_elem(&player_connection_map, flow_key, &now, BPF_NOEXIST) < 0)
     {
         return XDP_DROP;
     }
