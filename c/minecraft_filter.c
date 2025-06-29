@@ -213,7 +213,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 return XDP_DROP;
             }
             count++;
-            if (bpf_map_update_elem(&connection_throttle, &src_ip, &count, BPF_ANY) < 0)
+            if (bpf_map_update_elem(&connection_throttle, &src_ip, &count, BPF_EXIST) < 0)
             {
                 return XDP_DROP;
             }
@@ -221,7 +221,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         else
         {
             __u32 new_counter = 1;
-            if (bpf_map_update_elem(&connection_throttle, &src_ip, &new_counter, BPF_ANY) < 0)
+            if (bpf_map_update_elem(&connection_throttle, &src_ip, &new_counter, BPF_NOEXIST) < 0)
             {
                 return XDP_DROP;
             }
@@ -236,7 +236,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         // it's a valid new SYN, create a new flow entry
         struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, __builtin_bswap32(tcp->seq) + 1);
-        if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY) < 0)
+        if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_NOEXIST) < 0)
         {
             return XDP_DROP;
         }
@@ -249,11 +249,12 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     if (lastTime)
     {
         __u64 now = bpf_ktime_get_ns();
-        if (*lastTime + SECOND_TO_NANOS < now)
+        if (*lastTime + ( SECOND_TO_NANOS * 10 ) < now)
         {
-            if (bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_ANY) < 0)
+            if (bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_EXIST) < 0)
             {
                 // not sure how to handle this, just ignore?
+                return XDP_DROP;
             }
         }
         return XDP_PASS;
@@ -274,7 +275,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             return XDP_DROP;
         }
         initial_state->state = state = AWAIT_MC_HANDSHAKE;
-        if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_ANY) < 0)
+        if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST) < 0)
         {
             // we could not update the value we need to drop.
             return XDP_DROP;
