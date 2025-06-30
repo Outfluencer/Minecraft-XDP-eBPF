@@ -87,8 +87,8 @@ static __s32 block_and_drop(struct ipv4_flow_key *flow_key)
     __u64 now = bpf_ktime_get_ns();
     __u32 src_ip = flow_key->src_ip;
     bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);
-    bpf_map_delete_elem(&conntrack_map, flow_key);
     #endif
+    bpf_map_delete_elem(&conntrack_map, flow_key);
     return XDP_DROP;
 }
 /*
