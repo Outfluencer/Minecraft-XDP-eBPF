@@ -220,16 +220,11 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         __u32 *hit_counter = bpf_map_lookup_elem(&connection_throttle, &src_ip);
         if (hit_counter)
         {
-            __u32 count = *hit_counter;
-            if (count > HIT_COUNT)
+            if (*hit_counter > HIT_COUNT)
             {
                 return XDP_DROP;
             }
-            count++;
-            if (bpf_map_update_elem(&connection_throttle, &src_ip, &count, BPF_EXIST) < 0)
-            {
-                return XDP_DROP;
-            }
+            (*hit_counter)++;
         }
         else
         {
@@ -265,11 +260,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         __u64 now = bpf_ktime_get_ns();
         if (*lastTime + ( SECOND_TO_NANOS * 10 ) < now)
         {
-            if (bpf_map_update_elem(&player_connection_map, &flow_key, &now, BPF_EXIST) < 0)
-            {
-                // not sure how to handle this, just ignore?
-                return XDP_DROP;
-            }
+            *lastTime = now;
         }
         return XDP_PASS;
     }
