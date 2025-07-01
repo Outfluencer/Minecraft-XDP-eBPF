@@ -132,6 +132,89 @@ static __u32 switch_to_verified(struct ipv4_flow_key *flow_key)
     }
     return XDP_PASS;
 }
+static __u32 check_options(__u8 *opt_ptr, __u8 *opt_end, __u8 *packet_end)
+{
+    __u8 *reader_index = opt_ptr;
+    #pragma unroll
+    for(__u8 i = 0; i < 40; i++)
+    {
+        if ( reader_index >= packet_end || reader_index >= opt_end)
+        {
+            break; // end of options
+        }
+        __u8 kind = reader_index[0];
+        reader_index += 1;
+
+        if (kind == 0)
+        {
+            break;
+        }
+
+        if (kind == 1) // NOP
+        {
+            continue;
+        }
+
+        if ( reader_index >= packet_end || reader_index >= opt_end)
+        {
+            // cannot read length, unexpected end of options
+            return 1; 
+        }
+        __u8 len = reader_index[0];
+
+        if (len < 2)
+        {
+            return 1; // invalid option length
+        }
+        reader_index += 1;
+
+        if (kind == 2) // MSS
+        {
+            if (len != 4)
+            {
+                return 1; // invalid MSS option length
+            }
+
+            if ( reader_index + 1 >= packet_end || reader_index + 1 >= opt_end)
+            {
+                return 1;
+            }
+            __u16 mss = (__u16)(reader_index[0] << 8) | reader_index[1];
+            //bpf_printk("mss: %lu", mss);
+            reader_index += 2; // skip length
+            continue;
+        }
+
+        if (kind == 3) // window scale
+        {
+            if (len != 3)
+            {
+                return 1; // invalid window scale option length
+            }
+
+            if ( reader_index >= packet_end || reader_index >= opt_end)
+            {
+                return 1; // unexpected end of options
+            }
+            __u8 scale = reader_index[0];
+            //bpf_printk("scale: %lu", scale);
+            reader_index += 1; // skip length
+            continue;
+        }
+
+        if (kind == 4) // sack permitted
+        {
+            if (len != 2)
+            {
+                return 1; // invalid window scale option length
+            }
+           // bpf_printk("sack permitted");
+            continue;
+        }
+    }
+
+    return 0; // Options are valid
+}
 
 SEC("xdp")
 __s32 minecraft_filter(struct xdp_md *ctx)
@@ -213,6 +296,23 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             return XDP_DROP;
         }
         #endif
+
+
+
+
+        // this works perfectly for now but, experimental 
+        #ifdef STATELESS
+        /* PARSE TCP OPTIONS*/
+        __u8 *opt_ptr = (__u8 *)tcp + sizeof(struct tcphdr);
+        __u32 opts_len = tcp_hdr_len - sizeof(struct tcphdr);
+        __u8 *opt_end = opt_ptr + opts_len;
+
+        if (check_options(opt_ptr, opt_end, (void *)data_end) != 0) {
+            // invalid options, drop the packet
+            return XDP_DROP;
+        }
+        #endif
+
 
         #if CONNECTION_THROTTLE
         // connection throttle
