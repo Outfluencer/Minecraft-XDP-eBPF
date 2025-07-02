@@ -136,18 +136,18 @@ static __u32 check_options(__u8 *opt_ptr, __u8 *opt_end, __u8 *packet_end)
 {
     __u8 *reader_index = opt_ptr;
     #pragma unroll
-    for(__u8 i = 0; i < 40; i++)
+    for(__u8 i = 0; i < 10; i++)
     {
         if ( reader_index >= packet_end || reader_index >= opt_end)
         {
-            break; // end of options
+            return 0; // end of options
         }
         __u8 kind = reader_index[0];
         reader_index += 1;
 
         if (kind == 0)
         {
-            break;
+            return 0;
         }
 
         if (kind == 1) // NOP
@@ -162,7 +162,7 @@ static __u32 check_options(__u8 *opt_ptr, __u8 *opt_end, __u8 *packet_end)
         }
         __u8 len = reader_index[0];
 
-        if (len < 2)
+        if (len < 2 || len > 40)
         {
             return 1; // invalid option length
         }
@@ -211,9 +211,14 @@ static __u32 check_options(__u8 *opt_ptr, __u8 *opt_end, __u8 *packet_end)
            // bpf_printk("sack permitted");
             continue;
         }
+
+        // just skiip the len if we do not know
+        __u8 skip = len - 2;
+    	if (reader_index + skip > packet_end || reader_index + skip > opt_end ) return 1;
+    	reader_index += skip;
     }
 
-    return 0; // Options are valid
+    return 1; // too many opotions, probably attack
 }
 
 SEC("xdp")
