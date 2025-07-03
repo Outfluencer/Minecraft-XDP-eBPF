@@ -1,5 +1,10 @@
 #include <linux/types.h>
 
+// if you are running a premium server, you can enable this, it drops weird usernames
+#ifndef ONLY_ASCII_NAMES
+#define ONLY_ASCII_NAMES 0
+#endif
+
 // length pre checks
 const __s64 MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
 const __s64 MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
@@ -109,7 +114,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__s8 *start, __s8 *en
     };
 
     // invalid username
-    if (name_len > 16 * 3 || name_len < 1)
+    if (name_len > 16 * ( ONLY_ASCII_NAMES ? 1 : 3 ) || name_len < 1)
     {
         return 0;
     }
