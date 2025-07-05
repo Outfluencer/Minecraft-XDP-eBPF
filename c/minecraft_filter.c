@@ -81,26 +81,15 @@ static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp)
 /*
  * Blocks the ip if of the connection and drops the packet
  */
-static __s32 block_and_drop(struct ipv4_flow_key *flow_key)
+static __always_inline __s32 block_and_drop(struct ipv4_flow_key *flow_key)
 {
     #if BLOCK_IPS
     __u64 now = bpf_ktime_get_ns();
     __u32 src_ip = flow_key->src_ip;
+    // here we use any as we want to punish as long as possible
     bpf_map_update_elem(&blocked_ips, &src_ip, &now, BPF_ANY);
     #endif
     bpf_map_delete_elem(&conntrack_map, flow_key);
-    return XDP_DROP;
-}
-/*
- * Out of order tcp data, drop or block if to many
- */
-static __s32 out_of_order(struct initial_state *initial_state, struct ipv4_flow_key *flow_key)
-{
-    if (++initial_state->fails > MAX_OUT_OF_ORDER)
-    {
-        return block_and_drop(flow_key);
-    }
-    bpf_map_update_elem(&conntrack_map, flow_key, initial_state, BPF_ANY);
     return XDP_DROP;
 }
 
@@ -108,9 +97,10 @@ static __s32 out_of_order(struct initial_state *initial_state, struct ipv4_flow_
  * Tries to update the initial state
  * If unsuccessfull drops the packet, otherwise pass
  */
-static __s32 update_state_or_drop(struct initial_state *initial_state, struct ipv4_flow_key *flow_key)
+static __always_inline __s32 update_state_or_drop(struct initial_state *initial_state, struct ipv4_flow_key *flow_key)
 {
-    if (bpf_map_update_elem(&conntrack_map, flow_key, initial_state, BPF_ANY) < 0)
+    // if we update it it should exists, if not it was removed by another thread
+    if (bpf_map_update_elem(&conntrack_map, flow_key, initial_state, BPF_EXIST) < 0)
     {
         // could not update the value, we need to drop and hope it works next time
         return XDP_DROP;
@@ -120,7 +110,7 @@ static __s32 update_state_or_drop(struct initial_state *initial_state, struct ip
 /*
  * Drops the current packet and removes the connection from the conntrack_map
  */
-static __s32 drop_connection(struct ipv4_flow_key *flow_key)
+static __always_inline __s32 drop_connection(struct ipv4_flow_key *flow_key)
 {
     bpf_map_delete_elem(&conntrack_map, &flow_key);
     return XDP_DROP;
@@ -129,7 +119,7 @@ static __s32 drop_connection(struct ipv4_flow_key *flow_key)
  * Removes connection from initial map and puts it into the player map
  * No more packets of this connection will be checked now
  */
-static __u32 switch_to_verified(struct ipv4_flow_key *flow_key)
+static __always_inline __u32 switch_to_verified(struct ipv4_flow_key *flow_key)
 {
     bpf_map_delete_elem(&conntrack_map, flow_key);
     __u64 now = bpf_ktime_get_ns();
@@ -432,7 +422,13 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         // but invalid data
         if (initial_state->expected_sequence != __builtin_bswap32(tcp->seq))
         {
-            return out_of_order(initial_state, &flow_key);
+            if (++initial_state->fails > MAX_OUT_OF_ORDER)
+            {
+                goto block_and_drop;
+            }
+            // if it does not exist the connection was closed by another thread
+            bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST);
+            return XDP_DROP;
         }
 
         if (state == AWAIT_MC_HANDSHAKE)
