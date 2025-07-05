@@ -407,7 +407,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     // tcp packet is split in multiple ethernet frames, we don't support that
     if (packet_end > tcp_payload_end)
     {
-        return block_and_drop(&flow_key);
+        goto block_and_drop;
     }
 
     if (tcp_payload < tcp_payload_end && tcp_payload < packet_end)
@@ -415,7 +415,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
         if (!tcp->ack)
         {
-            return block_and_drop(&flow_key);
+            goto block_and_drop;
         }
 
         // we fully track the tcp packet order with this check,
@@ -433,51 +433,54 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             // even with retransmition this len should always be valid‚
             if (!next_state)
             {
-                return block_and_drop(&flow_key);
+                goto block_and_drop;
             }
 
             if (next_state == RECEIVED_LEGACY_PING)
             { // fully drop legacy ping
-                bpf_map_delete_elem(&conntrack_map, &flow_key);
-                return XDP_DROP;
+                goto drop;
             }
 
             initial_state->state = next_state;
             initial_state->expected_sequence += tcp_payload_len;
-            return next_state == LOGIN_FINISHED ? switch_to_verified(&flow_key) : update_state_or_drop(initial_state, &flow_key);
+            if (next_state == LOGIN_FINISHED)
+            {
+                goto switch_to_verified;
+            } else {
+                goto update_state_or_drop;
+            }
         }
         else if (state == AWAIT_STATUS_REQUEST)
         {
             if (!inspect_status_request(tcp_payload, tcp_payload_end, packet_end))
             {
-                return block_and_drop(&flow_key);
+                goto block_and_drop;
             }
             initial_state->state = AWAIT_PING;
             initial_state->expected_sequence += tcp_payload_len;
-            return update_state_or_drop(initial_state, &flow_key);
+            goto update_state_or_drop;
         }
         else if (state == AWAIT_PING)
         {
             if (!inspect_ping_request(tcp_payload, tcp_payload_end, packet_end))
             {
-                return block_and_drop(&flow_key);
+                goto block_and_drop;
             }
             initial_state->state = PING_COMPLETE;
             initial_state->expected_sequence += tcp_payload_len;
-            return update_state_or_drop(initial_state, &flow_key);
+            goto update_state_or_drop;
         }
         else if (state == AWAIT_LOGIN)
         {
             if (!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol, packet_end))
             {
-                return block_and_drop(&flow_key);
+                goto block_and_drop;
             }
-            return switch_to_verified(&flow_key);
+            goto switch_to_verified;
         }
         else if (state == PING_COMPLETE)
         {
-            bpf_map_delete_elem(&conntrack_map, &flow_key);
-            return XDP_DROP;
+            goto drop;
         }
         else
         {
@@ -490,6 +493,17 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     }
 
     return XDP_PASS;
+
+// Using this labels drasticly reduce the file size
+block_and_drop:
+    return block_and_drop(&flow_key);
+drop:
+    bpf_map_delete_elem(&conntrack_map, &flow_key);
+    return XDP_DROP;
+update_state_or_drop:
+    return update_state_or_drop(initial_state, &flow_key);
+switch_to_verified:
+    return switch_to_verified(&flow_key);
 }
 
 char _license[] SEC("license") = "Proprietary";
