@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 aya = "0.13.1"
 bytemuck = { version = "1.23.1", features = ["derive"] }
-env_logger = { version = "0.11.8", default-features = false, features = ["auto-color"] }
+env_logger = { version = "0.11.8" }
 log = "0.4.27"
 signal-hook = "0.3.18"
 anyhow = "1.0.98"
