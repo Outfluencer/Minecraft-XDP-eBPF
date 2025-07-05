@@ -117,7 +117,14 @@ static __s32 update_state_or_drop(struct initial_state *initial_state, struct ip
     }
     return XDP_PASS;
 }
-
+/*
+ * Drops the current packet and removes the connection from the conntrack_map
+ */
+static __s32 drop_connection(struct ipv4_flow_key *flow_key)
+{
+    bpf_map_delete_elem(&conntrack_map, &flow_key);
+    return XDP_DROP;
+}
 /*
  * Removes connection from initial map and puts it into the player map
  * No more packets of this connection will be checked now
@@ -132,6 +139,7 @@ static __u32 switch_to_verified(struct ipv4_flow_key *flow_key)
     }
     return XDP_PASS;
 }
+#ifdef STATELESS
 static __u32 check_options(__u8 *opt_ptr, __u8 *opt_end, __u8 *packet_end)
 {
     __u8 *reader_index = opt_ptr;
@@ -220,6 +228,7 @@ static __u32 check_options(__u8 *opt_ptr, __u8 *opt_end, __u8 *packet_end)
 
     return 1; // too many opotions, probably attack
 }
+#endif
 
 SEC("xdp")
 __s32 minecraft_filter(struct xdp_md *ctx)
@@ -436,9 +445,10 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 goto block_and_drop;
             }
 
+            // fully drop legacy ping
             if (next_state == RECEIVED_LEGACY_PING)
-            { // fully drop legacy ping
-                goto drop;
+            {
+                return drop_connection(&flow_key);
             }
 
             initial_state->state = next_state;
@@ -480,26 +490,14 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         else if (state == PING_COMPLETE)
         {
-            goto drop;
-        }
-        else
-        {
-            // should never happen
+            goto block_and_drop;
         }
     }
-    else
-    {
-        // bpf_printk("no payload seq %lu, ack %lu", __builtin_bswap32(tcp->seq), __builtin_bswap32(tcp->ack_seq));
-    }
-
     return XDP_PASS;
 
 // Using this labels drasticly reduce the file size
 block_and_drop:
     return block_and_drop(&flow_key);
-drop:
-    bpf_map_delete_elem(&conntrack_map, &flow_key);
-    return XDP_DROP;
 update_state_or_drop:
     return update_state_or_drop(initial_state, &flow_key);
 switch_to_verified:
@@ -507,3 +505,4 @@ switch_to_verified:
 }
 
 char _license[] SEC("license") = "Proprietary";
+// bpf_printk("no payload seq %lu, ack %lu", __builtin_bswap32(tcp->seq), __builtin_bswap32(tcp->ack_seq));
