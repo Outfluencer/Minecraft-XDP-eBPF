@@ -112,7 +112,7 @@ static __always_inline __s32 update_state_or_drop(struct initial_state *initial_
  */
 static __always_inline __s32 drop_connection(struct ipv4_flow_key *flow_key)
 {
-    bpf_map_delete_elem(&conntrack_map, &flow_key);
+    bpf_map_delete_elem(&conntrack_map, flow_key);
     return XDP_DROP;
 }
 /*
