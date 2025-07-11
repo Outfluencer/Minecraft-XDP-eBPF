@@ -26,12 +26,12 @@ static __always_inline struct varint_value varint(int value, unsigned int bytes)
 _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
 
 
-__always_inline struct varint_value read_varint_sized(__s8 *start, __s8 *end, __u8 max_size)
+__always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *end, __u8 max_size)
 {
     // Byte 1
     if (max_size < 1 || start >= end) goto error;
     
-    register __s8 b = *start++;
+    register __u8 b = *start++;
     register __s32 result = (b & 0x7F);
     if (!(b & 0x80)) return varint(result, 1);
     
@@ -63,27 +63,27 @@ error:
 }
 
 // checks if the packet contains a valid ping request
-static __always_inline __u8 inspect_ping_request(__s8 *start, __s8 *end, __s8 *packet_end)
+static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *end, __u8 *packet_end)
 {
     // we could check if the timestamp is negative here
     return start + 2 <= end && packet_end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
 }
 
 // checks if the packet contains a valid status request
-static __always_inline __u8 inspect_status_request(__s8 *start, __s8 *end, __s8 *packet_end)
+static __always_inline __u8 inspect_status_request(__u8 *start, __u8 *end, __u8 *packet_end)
 {
     return start + 2 <= end && packet_end - start == STATUS_REQUEST_LEN && start[0] == 1 && start[1] == 0;
 }
 
 // checks if the packet contains a valid login request
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
-__attribute__((noinline)) static __u8 inspect_login_packet(__s8 *start, __s8 *end, __s32 protocol_version, __s8 *packet_end)
+__attribute__((noinline)) static __u8 inspect_login_packet(__u8 *start, __u8 *end, __s32 protocol_version, __u8 *packet_end)
 {
     __s64 size = packet_end - start;
     if (size > MAX_LOGIN_LEN || size < MIN_LOGIN_LEN)
         return 0;
 
-    __s8 *reader_index = start;
+    __u8 *reader_index = start;
 
     // length of the packet
     register struct varint_value varint = read_varint_sized(reader_index, end, 2);
@@ -130,7 +130,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__s8 *start, __s8 *en
     {
         if (reader_index + 1 <= end)
         {
-            __s8 has_public_key = reader_index[0];
+            __u8 has_public_key = reader_index[0];
             reader_index++;
             if (has_public_key)
             {
@@ -225,7 +225,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__s8 *start, __s8 *en
             {
                 return 0;
             }
-            __s8 has_uuid = reader_index[0];
+            __u8 has_uuid = reader_index[0];
             reader_index++;
             if (has_uuid)
             {
@@ -246,12 +246,12 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__s8 *start, __s8 *en
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-__attribute__((noinline)) static __s32 inspect_handshake(__s8 *start, __s8 *end, __s32 *protocol_version, __s8 *packet_end)
+__attribute__((noinline)) static __s32 inspect_handshake(__u8 *start, __u8 *end, __s32 *protocol_version, __u8 *packet_end)
 {
 
     if (start + 1 <= end)
     {
-        if (start[0] == (__s8)0xFE)
+        if (start[0] == (__u8)0xFE)
         {
             return RECEIVED_LEGACY_PING;
         }
@@ -263,7 +263,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(__s8 *start, __s8 *end,
         return 0;
     }
 
-    __s8 *reader_index = start;
+    __u8 *reader_index = start;
     // packet length
     register struct varint_value varint = read_varint_sized(reader_index, end, 2);
     if (!varint.bytes || varint.value > MAX_HANDSHAKE_LEN)
