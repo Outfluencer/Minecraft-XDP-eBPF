@@ -301,9 +301,6 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         #endif
 
-
-
-
         // this works perfectly for now but, experimental 
         #ifdef STATELESS
         /* PARSE TCP OPTIONS*/
@@ -341,15 +338,8 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         #endif
 
         struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
-        struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
-
-        if (initial_state)
-        {
-            return XDP_DROP; // drop, we already have a connection
-        }
-        // it's a valid new SYN, create a new flow entry
         struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, __builtin_bswap32(tcp->seq) + 1);
-        if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_NOEXIST) < 0)
+        if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY) < 0)
         {
             return XDP_DROP;
         }
@@ -393,15 +383,15 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         // return XDP_PASS;
     }
 
-    __s8 *tcp_payload = (__s8 *)((__u8 *)tcp + tcp_hdr_len);
-    __s8 *tcp_payload_end = (__s8 *)data_end;
+    __u8 *tcp_payload = (__u8 *)((__u8 *)tcp + tcp_hdr_len);
+    __u8 *tcp_payload_end = (__u8 *)data_end;
 
     __u16 ip_total_len = __builtin_bswap16(ip->tot_len);
 
     // Check: sind IP-Header und TCP-Header im IP-Paket enthalten?
     __u16 tcp_payload_len = ip_total_len - ip_hdr_len - tcp_hdr_len;
 
-    __s8 *packet_end = tcp_payload + tcp_payload_len;
+    __u8 *packet_end = tcp_payload + tcp_payload_len;
 
     // tcp packet is split in multiple ethernet frames, we don't support that
     if (packet_end > tcp_payload_end)
