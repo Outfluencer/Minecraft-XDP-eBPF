@@ -13,59 +13,53 @@ const __s64 STATUS_REQUEST_LEN = 2;
 const __s64 PING_REQUEST_LEN = 10;
 const __s64 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
 
-// Read Minecraft varint
-__attribute__((noinline)) static __u32 read_varint_sized(__s8 *start, __s8 *end, __s32 *return_value, __u8 max_size)
+struct varint_value {
+    int value;
+    unsigned int bytes; // 1 to 5 bytes
+};
+
+static __always_inline struct varint_value varint(int value, unsigned int bytes)
 {
-    // instant return if read already on the end
-    if (start >= end)
-        return 0;
+    return (struct varint_value) { value, bytes };
+}
 
-    if (max_size < 1 || start + 1 > end)
-        return 0;
-    __s8 first = start[0];
-    if ((first & 0x80) == 0)
-    {
-        *return_value = first;
-        return 1;
-    }
+_Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
 
-    if (max_size < 2 || start + 2 > end)
-        return 0;
-    __s8 second = start[1];
-    if ((second & 0x80) == 0)
-    {
-        *return_value = (first & 0x7F) | ((second & 0x7F) << 7);
-        return 2;
-    }
 
-    if (max_size < 3 || start + 3 > end)
-        return 0;
-    __s8 third = start[2];
-    if ((third & 0x80) == 0)
-    {
-        *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14);
-        return 3;
-    }
-
-    if (max_size < 4 || start + 4 > end)
-        return 0;
-    __s8 fourth = start[3];
-    if ((fourth & 0x80) == 0)
-    {
-        *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21);
-        return 4;
-    }
-
-    if (max_size < 5 || start + 5 > end)
-        return 0;
-    __s8 fifth = start[4];
-    if ((fifth & 0x80) == 0)
-    {
-        *return_value = (first & 0x7F) | ((second & 0x7F) << 7) | ((third & 0x7F) << 14) | ((fourth & 0x7F) << 21) | ((fifth & 0x7F) << 28);
-        return 5;
-    }
-    // varint to big
-    return 0;
+__always_inline struct varint_value read_varint_sized(__s8 *start, __s8 *end, __u8 max_size)
+{
+    // Byte 1
+    if (max_size < 1 || start >= end) goto error;
+    
+    register __s8 b = *start++;
+    register __s32 result = (b & 0x7F);
+    if (!(b & 0x80)) return varint(result, 1);
+    
+    // Byte 2
+    if (max_size < 2 || start >= end) goto error;
+    b = *start++;
+    result |= ((b & 0x7F) << 7);
+    if (!(b & 0x80)) return varint(result, 2);
+    
+    // Byte 3
+    if (max_size < 3 || start >= end) goto error;
+    b = *start++;
+    result |= ((b & 0x7F) << 14);
+    if (!(b & 0x80)) return varint(result, 3);
+    
+    // Byte 4
+    if (max_size < 4 || start >= end) goto error;
+    b = *start++;
+    result |= ((b & 0x7F) << 21);
+    if (!(b & 0x80)) return varint(result, 4);
+    
+    // Byte 5
+    if (max_size < 5 || start >= end) goto error;
+    b = *start;
+    result |= ((b & 0x7F) << 28);
+    if (!(b & 0x80)) return varint(result, 5);
+error:
+    return varint(0, 0);
 }
 
 // checks if the packet contains a valid ping request
@@ -90,46 +84,47 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__s8 *start, __s8 *en
         return 0;
 
     __s8 *reader_index = start;
-    __s32 packet_len;
-    __u32 packet_len_bytes = read_varint_sized(start, end, &packet_len, 2);
-    if (!packet_len_bytes || packet_len > MAX_LOGIN_LEN)
+
+    // length of the packet
+    register struct varint_value varint = read_varint_sized(reader_index, end, 2);
+    if (!varint.bytes || varint.value > MAX_LOGIN_LEN)
     {
         return 0;
     };
-    reader_index += packet_len_bytes;
+    reader_index += varint.bytes;
 
-    __s32 packet_id;
-    __u32 packet_id_bytes = read_varint_sized(reader_index, end, &packet_id, 1);
-    if (!packet_id_bytes || packet_id != 0x00)
+    // packet id
+    varint = read_varint_sized(reader_index, end, 1);
+    if (!varint.bytes || varint.value != 0x00)
     {
         return 0;
     };
-    reader_index += packet_id_bytes;
+    reader_index += varint.bytes;
 
-    __s32 name_len;
-    __u32 name_len_bytes = read_varint_sized(reader_index, end, &name_len, 2);
-    if (!name_len_bytes)
+    // username length
+    varint = read_varint_sized(reader_index, end, 2);
+    if (!varint.bytes)
     {
         return 0;
     };
 
     // invalid username
-    if (name_len > 16 * ( ONLY_ASCII_NAMES ? 1 : 3 ) || name_len < 1)
+    if (varint.value > 16 * ( ONLY_ASCII_NAMES ? 1 : 3 ) || varint.value < 1)
     {
         return 0;
     }
 
-    if (reader_index + name_len_bytes > end)
+    if (reader_index + varint.bytes > end)
     {
         return 0;
     }
 
-    reader_index += name_len_bytes;
-    if (reader_index + name_len > end)
+    reader_index += varint.bytes;
+    if (reader_index + varint.value > end)
     {
         return 0;
     }
-    reader_index += name_len;
+    reader_index += varint.value;
     // 1_19                                          1_19_3
     if (protocol_version >= 759 && protocol_version < 761)
     {
@@ -144,57 +139,60 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__s8 *start, __s8 *en
                     return 0;
                 }
                 reader_index += 8; // skip expiry time
-                __s32 key_len;
-                __u32 key_len_bytes = read_varint_sized(reader_index, end, &key_len, 2);
 
-                if (!key_len_bytes)
+                // login key
+                varint = read_varint_sized(reader_index, end, 2);
+
+                if (!varint.bytes)
                 {
                     return 0;
                 };
-                if (key_len < 0)
+
+                if (varint.value < 0)
                 {
                     return 0;
                 }
-                __u32 key_lenu = (__u32)key_len;
+                __u32 key_lenu = (__u32)varint.value;
 
                 if (key_lenu > 512)
                 {
                     return 0;
                 }
 
-                if (reader_index + key_len_bytes > end)
+                if (reader_index + varint.bytes > end)
                 {
                     return 0;
                 }
 
-                reader_index += key_len_bytes;
+                reader_index += varint.bytes;
 
                 if (reader_index + key_lenu > end)
                 {
                     return 0;
                 }
                 reader_index += key_lenu;
-                __s32 signaturey_len;
-                __u32 signaturey_len_bytes = read_varint_sized(reader_index, end, &signaturey_len, 2);
+                // signaturey length
+                varint = read_varint_sized(reader_index, end, 2);
 
-                if (!signaturey_len_bytes)
+
+                if (!varint.bytes)
                 {
                     return 0;
                 }
-                if (signaturey_len < 0)
+                if (varint.value < 0)
                 {
                     return 0;
                 }
-                __u32 signaturey_lenu = (__u32)signaturey_len;
+                __u32 signaturey_lenu = (__u32)varint.value;
                 if (signaturey_lenu > 4096)
                 {
                     return 0;
                 }
-                if (reader_index + signaturey_len_bytes > end)
+                if (reader_index + varint.bytes > end)
                 {
                     return 0;
                 }
-                reader_index += signaturey_len_bytes;
+                reader_index += varint.bytes;
                 if (reader_index + signaturey_lenu > end)
                 {
                     return 0;
@@ -266,59 +264,63 @@ __attribute__((noinline)) static __s32 inspect_handshake(__s8 *start, __s8 *end,
     }
 
     __s8 *reader_index = start;
-    __s32 packet_len;
-    __u32 packet_len_bytes = read_varint_sized(start, end, &packet_len, 2);
-    if (!packet_len_bytes || packet_len > MAX_HANDSHAKE_LEN)
+    // packet length
+    register struct varint_value varint = read_varint_sized(reader_index, end, 2);
+    if (!varint.bytes || varint.value > MAX_HANDSHAKE_LEN)
     {
         return 0;
     };
-    reader_index += packet_len_bytes;
+    reader_index += varint.bytes;
 
-    __s32 packet_id;
-    __u32 packet_id_bytes = read_varint_sized(reader_index, end, &packet_id, 1);
-    if (!packet_id_bytes || packet_id != 0x00)
+    //packet id
+    varint = read_varint_sized(reader_index, end, 1);
+    if (!varint.bytes || varint.value != 0x00)
     {
         return 0;
     };
-    reader_index += packet_id_bytes;
+    reader_index += varint.bytes;
 
-    __u32 protocol_version_bytes = read_varint_sized(reader_index, end, protocol_version, 5);
-    if (!protocol_version_bytes)
+    // protocol version 
+    varint = read_varint_sized(reader_index, end, 5);
+    if (!varint.bytes)
     {
         return 0;
     };
-    reader_index += protocol_version_bytes;
+    *protocol_version = varint.value;
 
-    __s32 host_len;
-    __u32 host_len_bytes = read_varint_sized(reader_index, end, &host_len, 2);
-    if (!host_len_bytes)
+    reader_index += varint.bytes;
+
+    // host len
+    varint = read_varint_sized(reader_index, end, 2);
+
+    if (!varint.bytes)
     {
         return 0;
     };
 
-    if (host_len > 255 * 3 || host_len < 1)
+    if (varint.value > 255 * 3 || varint.value < 1)
     {
         return 0;
     }
 
-    if (reader_index + host_len_bytes > end)
+    if (reader_index + varint.bytes > end)
         return 0;
-    reader_index += host_len_bytes;
-    if (reader_index + host_len > end)
+    reader_index += varint.bytes;
+    if (reader_index + varint.value > end)
         return 0;
-    reader_index += host_len;
+    reader_index += varint.value;
     if (reader_index + 2 > end)
         return 0;
     reader_index += 2;
 
-    __s32 intention;
-    __u32 intention_bytes = read_varint_sized(reader_index, end, &intention, 1);
-
-    if (!intention_bytes || (intention != 1 && intention != 2 && (*protocol_version >= 766 ? intention != 3 : 1)))
+    // intention
+    varint = read_varint_sized(reader_index, end, 1);
+    __s32 intention = varint.value;
+    if (!varint.bytes || (intention != 1 && intention != 2 && (*protocol_version >= 766 ? intention != 3 : 1)))
     {
         return 0;
     };
-    reader_index += intention_bytes;
+    reader_index += varint.bytes;
 
     // this packet contained exactly the handshake
     if (reader_index == packet_end)
