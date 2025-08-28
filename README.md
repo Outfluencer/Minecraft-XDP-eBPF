@@ -17,8 +17,6 @@ After that the xdp_loader file should be in the `Minecraft-XDP-eBPF/target/relea
 Then you can run the loader with `./xdp_loader <network interface>`  
 Note: This project uses a persistent XDP userspace loader to maintain connection state and manage eBPF maps. Exiting the loader will unload the firewall.  
 
-Test server with the filter: dev.outfluencer.dev  
-
 ⭐ Don't forget to star the project!
 
 https://youtu.be/Tq8QHJAMhRc
