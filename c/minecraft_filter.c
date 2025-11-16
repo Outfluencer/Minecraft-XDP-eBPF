@@ -210,13 +210,13 @@ static __u32 check_options(__u8 *opt_ptr, __u8 *opt_end, __u8 *packet_end)
             continue;
         }
 
-        // just skiip the len if we do not know
+        // just skip the len if we do not know
         __u8 skip = len - 2;
     	if (reader_index + skip > packet_end || reader_index + skip > opt_end ) return 1;
     	reader_index += skip;
     }
 
-    return 1; // too many opotions, probably attack
+    return 1; // too many options, probably attack
 }
 #endif
 
@@ -388,7 +388,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
     __u16 ip_total_len = __builtin_bswap16(ip->tot_len);
 
-    // Check: sind IP-Header und TCP-Header im IP-Paket enthalten?
+    // are ip header and tcp header contained in ip packet?
     __u16 tcp_payload_len = ip_total_len - ip_hdr_len - tcp_hdr_len;
 
     __u8 *packet_end = tcp_payload + tcp_payload_len;

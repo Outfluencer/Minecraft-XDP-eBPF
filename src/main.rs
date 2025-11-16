@@ -24,7 +24,6 @@ mod common;
 
 const SECOND_TO_NANOS: u64 = 1_000_000_000;
 
-// the heart beat is every 100 milliseconds
 const OLD_CONNECTION_TIMEOUT: u64 = 60; // every 60 seconds
 const BLOCKED_IP_TIMEOUT: u64 = 60; // every 60 seconds
 const THROTTLE_CLEAR_CYCLE: u64 = 3; // every 3 seconds
