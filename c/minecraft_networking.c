@@ -108,23 +108,26 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *start, __u8 *en
         return 0;
     };
 
-    // invalid username
-    if (varint.value > 16 * ( ONLY_ASCII_NAMES ? 1 : 3 ) || varint.value < 1)
-    {
-        return 0;
-    }
 
     if (reader_index + varint.bytes > end)
     {
         return 0;
     }
 
-    reader_index += varint.bytes;
-    if (reader_index + varint.value > end)
+    // bounce check, invalid username
+    if (varint.value < 1 || varint.value > 16 * ( ONLY_ASCII_NAMES ? 1 : 3 ))
     {
         return 0;
     }
-    reader_index += varint.value;
+
+    __u32 username_len = (__u32)varint.value;
+
+    reader_index += varint.bytes;
+    if (reader_index + username_len > end)
+    {
+        return 0;
+    }
+    reader_index += username_len;
     // 1_19                                          1_19_3
     if (protocol_version >= 759 && protocol_version < 761)
     {
@@ -314,12 +317,27 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *start, __u8 *end,
     reader_index += 2;
 
     // intention
-    varint = read_varint_sized(reader_index, end, 1);
-    __s32 intention = varint.value;
-    if (!varint.bytes || (intention != 1 && intention != 2 && (*protocol_version >= 766 ? intention != 3 : 1)))
+    varint = read_varint_sized(reader_index, end, 1);   
+
+    if (!varint.bytes)
     {
         return 0;
     };
+
+    __s32 intention = varint.value;
+    __u8 support_transfer = *protocol_version >= 766;
+
+    // valid intentions: 1 (status), 2 (login), 3 (login with transfer request) since 766
+    if (intention == 1 || intention == 2 || (support_transfer && intention == 3))
+    {
+        // valid
+    }
+    else
+    {
+        return 0; 
+    }
+
+
     reader_index += varint.bytes;
 
     // this packet contained exactly the handshake
