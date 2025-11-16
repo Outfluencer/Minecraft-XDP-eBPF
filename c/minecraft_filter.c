@@ -362,7 +362,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
     if (!initial_state)
     {
-        return XDP_DROP; // no connection, pass
+        return XDP_DROP; // no connection tracked, drop
     }
 
     __u32 state = initial_state->state;
@@ -472,6 +472,8 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             {
                 goto block_and_drop;
             }
+            // as tracking ends here we do not need to update the sequence
+            // initial_state->expected_sequence += tcp_payload_len;
             goto switch_to_verified;
         }
         else if (state == PING_COMPLETE)
