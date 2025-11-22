@@ -382,13 +382,13 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     // stateless new connection checks
     if (tcp->syn)
     {
-
+        count_stats(stats_ptr, SYN_RECEIVE, 1);
         // drop syn's of new connections if blocked
         #if BLOCK_IPS
         __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
         if (blocked)
         {        
-            goto syn_drop;
+            goto drop;
         }
         #endif
 
@@ -414,7 +414,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             if (*hit_counter > HIT_COUNT)
             {
-                goto syn_drop;
+                goto drop;
             }
             (*hit_counter)++;
         }
@@ -423,7 +423,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             __u32 new_counter = 1;
             if (bpf_map_update_elem(&connection_throttle, &src_ip, &new_counter, BPF_NOEXIST) < 0)
             {
-                goto syn_drop;
+                goto drop;
             }
         }
         #endif
@@ -432,15 +432,10 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, __builtin_bswap32(tcp->seq) + 1);
         if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY) < 0)
         {
-            goto syn_drop;
+            goto drop;
         }
 
-        count_stats(stats_ptr, SYN_RECEIVE, 1);
         return XDP_PASS;
-
-        syn_drop:
-            count_stats(stats_ptr, SYN_RECEIVE | DROPPED_PACKET, 1);
-            goto drop;
     }
 
     struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
