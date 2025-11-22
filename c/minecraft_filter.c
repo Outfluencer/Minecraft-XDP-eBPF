@@ -183,11 +183,10 @@ static __always_inline __s32 update_state_or_drop(__u64 packet_size, struct stat
 /*
  * Drops the current packet and removes the connection from the conntrack_map
  */
-static __always_inline __s32 drop_legacy_connection(struct statistics *stats_ptr, struct ipv4_flow_key *flow_key)
+static __always_inline void drop_legacy_connection(struct statistics *stats_ptr, struct ipv4_flow_key *flow_key)
 {
-    count_stats(stats_ptr, DROP_CONNECTION | DROPPED_PACKET, 1);
+    count_stats(stats_ptr, DROP_CONNECTION, 1);
     bpf_map_delete_elem(&conntrack_map, flow_key);
-    return XDP_DROP;
 }
 /*
  * Removes connection from initial map and puts it into the player map
@@ -526,7 +525,8 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             // fully drop legacy ping
             if (next_state == RECEIVED_LEGACY_PING)
             {
-                return drop_legacy_connection(stats_ptr, &flow_key);
+                drop_legacy_connection(stats_ptr, &flow_key);
+                goto drop;
             }
 
             initial_state->state = next_state;
