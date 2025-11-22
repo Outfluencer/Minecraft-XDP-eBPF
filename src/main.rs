@@ -230,7 +230,7 @@ fn load(
     condvar: Arc<Condvar>,
 ) -> Result<(), anyhow::Error> {
     let data = include_bytes_aligned!(concat!(env!("CARGO_MANIFEST_DIR"), "/c/minecraft_filter.o"));
-    info!("Loaded BPF proagram (size: {})", data.len());
+    info!("Loaded BPF program (size: {})", data.len());
 
     let mut ebpf = Ebpf::load(data)?;
 
