@@ -1,7 +1,7 @@
 use anyhow::Result;
 use aya::{
     Ebpf, include_bytes_aligned,
-    maps::{HashMap, MapData},
+    maps::{HashMap, MapData, PerCpuArray, PerCpuValues},
     programs::{Xdp, XdpFlags},
 };
 use common::Ipv4FlowKey;
@@ -20,6 +20,8 @@ use std::{
     time::Duration,
 };
 
+use crate::common::Statistics;
+
 mod common;
 
 const SECOND_TO_NANOS: u64 = 1_000_000_000;
@@ -27,6 +29,8 @@ const SECOND_TO_NANOS: u64 = 1_000_000_000;
 const OLD_CONNECTION_TIMEOUT: u64 = 60; // every 60 seconds
 const BLOCKED_IP_TIMEOUT: u64 = 60; // every 60 seconds
 const THROTTLE_CLEAR_CYCLE: u64 = 3; // every 3 seconds
+const STATS_TRACKING_CYCLE: u64 = 10; // every 10 seconds
+
 
 fn shutdown(running: Arc<AtomicBool>, condvar: Arc<Condvar>) {
     if running.load(Ordering::SeqCst) {
@@ -94,7 +98,7 @@ fn load(
     condvar: Arc<Condvar>,
 ) -> Result<(), anyhow::Error> {
     let data = include_bytes_aligned!(concat!(env!("CARGO_MANIFEST_DIR"), "/c/minecraft_filter.o"));
-    info!("Loaded BPF program (size: {})", data.len());
+    info!("Loaded BPF proagram (size: {})", data.len());
 
     let mut ebpf = Ebpf::load(data)?;
 
@@ -109,6 +113,10 @@ fn load(
         "BPF program attached to interface: {} ({:?})",
         interface, result
     );
+
+    for (name, _) in ebpf.maps() {
+        info!("Found map: {}", name);
+    }
 
     let player_connection_map = {
         let map = ebpf
@@ -135,6 +143,14 @@ fn load(
         HashMap::<MapData, u32, u64>::try_from(map)?
     };
     let blocked_ips_ref: Arc<Mutex<HashMap<MapData, u32, u64>>> = Arc::new(Mutex::new(blocked_ips));
+    let stats = {
+        let map = ebpf
+            .take_map("stats_map")
+            .ok_or_else(|| anyhow::anyhow!("Can't take map 'stats_map'"))?;
+        PerCpuArray::<MapData, Statistics>::try_from(map)?
+    };
+
+    let stats_ref: Arc<Mutex<PerCpuArray<MapData, Statistics>>> = Arc::new(Mutex::new(stats));
 
     let handle1 = spawn_old_connection_clear(
         "clear-old",
@@ -148,7 +164,8 @@ fn load(
         condvar.clone(),
         connection_throttle_ref,
     )?;
-    let handle3 = spawn_block_clear("clear-blocks", running, condvar, blocked_ips_ref)?;
+    let handle3 = spawn_block_clear("clear-blocks", running.clone(), condvar.clone(), blocked_ips_ref)?;
+    let handle4 = spawn_stats_thread("track-stats", running.clone(), condvar.clone(), stats_ref.clone())?;
 
     let _ = handle1
         .join()
@@ -159,7 +176,77 @@ fn load(
     let _ = handle3
         .join()
         .map_err(|e| anyhow::anyhow!("clear-blocks thread panicked: {:?}", e))?;
+    let _ = handle4
+        .join()
+        .map_err(|e| anyhow::anyhow!("track-stats thread panicked: {:?}", e))?;
 
+    Ok(())
+}
+
+fn spawn_stats_thread(
+    name: &'static str,
+    running: Arc<AtomicBool>,
+    condvar: Arc<Condvar>,
+    stats_ref: Arc<Mutex<PerCpuArray<MapData, Statistics>>>,
+) -> Result<thread::JoinHandle<()>, anyhow::Error> {
+    thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            if let Err(e) = track_stats(running.clone(), condvar.clone(), stats_ref) {
+                error!("Failed to track stats: {:?}", e);
+                shutdown(running, condvar);
+            }
+        })
+        .map_err(|e| e.into())
+}
+
+fn track_stats(
+    running: Arc<AtomicBool>,
+    condvar: Arc<Condvar>,
+    stats_ref: Arc<Mutex<PerCpuArray<MapData, Statistics>>>,
+) -> Result<(), anyhow::Error> {
+    let dummy_mutex = Mutex::new(());
+    while running.load(Ordering::SeqCst) {
+        let mut stats = stats_ref
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
+
+        let values = stats.get(&0, 0)?;
+        let mut total = Statistics::default();
+        for cpu_stat in values.iter() {
+            total.incoming_bytes += cpu_stat.incoming_bytes;
+            total.dropped_bytes += cpu_stat.dropped_bytes;
+            total.ip_blocks += cpu_stat.ip_blocks;
+            total.verified += cpu_stat.verified;
+            total.dropped_packets += cpu_stat.dropped_packets;
+            total.state_switches += cpu_stat.state_switches;
+            total.drop_connection += cpu_stat.drop_connection;
+            total.syn += cpu_stat.syn;
+            total.tcp_bypass += cpu_stat.tcp_bypass;
+        }
+        info!(
+            "Stats: Incoming: {} bytes, Dropped: {} bytes, Packets Dropped: {}, Verified: {}, Syn: {}, Bypass: {}",
+            total.incoming_bytes,
+            total.dropped_bytes,
+            total.dropped_packets,
+            total.verified,
+            total.syn,
+            total.tcp_bypass
+        );
+
+        // Reset stats
+        let zeros = vec![Statistics::default(); values.len()];
+        let new_values = PerCpuValues::try_from(zeros)?;
+        stats.set(0, new_values, 0)?;
+
+
+        let guard = dummy_mutex
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
+        let _ = condvar
+            .wait_timeout(guard, Duration::from_secs(STATS_TRACKING_CYCLE))
+            .map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
+    }
     Ok(())
 }
 
