@@ -95,47 +95,47 @@ static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp)
 static __always_inline void count_stats(struct statistics *stats_ptr, __u32 bitmask, __u64 amount) 
 {
 
-    if ( bitmask & INCOMING_BYTES ) 
+    if (bitmask & INCOMING_BYTES) 
     {
         stats_ptr->incoming_bytes += amount;
     }
 
-    if ( bitmask & DROPPED_BYTES ) 
+    if (bitmask & DROPPED_BYTES) 
     {
         stats_ptr->dropped_bytes += amount;
     }
 
-    if ( bitmask & IP_BLOCK ) 
+    if (bitmask & IP_BLOCK) 
     {
         stats_ptr->ip_blocks += amount;
     }
 
-    if ( bitmask & VERIFIED ) 
+    if (bitmask & VERIFIED) 
     {
         stats_ptr->verified += amount;
     }
 
-    if ( bitmask & DROPPED_PACKET ) 
+    if (bitmask & DROPPED_PACKET) 
     {
         stats_ptr->dropped_packets += amount;
     }
 
-    if ( bitmask & STATE_SWITCH ) 
+    if (bitmask & STATE_SWITCH) 
     {
         stats_ptr->state_switches += amount;
     }
 
-    if ( bitmask & DROP_CONNECTION ) 
+    if (bitmask & DROP_CONNECTION) 
     {
         stats_ptr->drop_connection += amount;
     }
 
-    if ( bitmask & SYN_RECEIVE ) 
+    if (bitmask & SYN_RECEIVE) 
     {
         stats_ptr->syn += amount;
     }
 
-    if ( bitmask & TCP_BYPASS ) 
+    if (bitmask & TCP_BYPASS) 
     {
         stats_ptr->tcp_bypass += amount;
     }
