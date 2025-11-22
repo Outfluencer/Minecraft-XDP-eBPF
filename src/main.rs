@@ -154,7 +154,6 @@ fn main() {
         println!(include_str!("../LICENSE"));
         return;
     }
-    
     setup_logger().expect("Failed to setup logger");
 
     info!("Loading minecraft xdp filter v1.9 by Outfluencer...");
