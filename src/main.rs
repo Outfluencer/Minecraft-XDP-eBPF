@@ -367,7 +367,6 @@ fn track_stats(
             total.drop_connection,
             total.ip_blocks
         );
-
       
         // Reset stats
         let zeros = vec![Statistics::default(); values.len()];

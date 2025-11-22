@@ -1,15 +1,15 @@
 #include <linux/types.h>
 
 // bitmask for statistics types
-const __u32 IP_BLOCK =        1u << 0;
-const __u32 VERIFIED =        1u << 1;
-const __u32 DROPPED_PACKET =  1u << 2;
-const __u32 STATE_SWITCH =    1u << 3;
+const __u32 IP_BLOCK = 1u << 0;
+const __u32 VERIFIED = 1u << 1;
+const __u32 DROPPED_PACKET = 1u << 2;
+const __u32 STATE_SWITCH = 1u << 3;
 const __u32 DROP_CONNECTION = 1u << 4;
-const __u32 SYN_RECEIVE =     1u << 5;
-const __u32 TCP_BYPASS =      1u << 6;
-const __u32 INCOMING_BYTES =  1u << 7;
-const __u32 DROPPED_BYTES =   1u << 8;
+const __u32 SYN_RECEIVE = 1u << 5;
+const __u32 TCP_BYPASS = 1u << 6;
+const __u32 INCOMING_BYTES = 1u << 7;
+const __u32 DROPPED_BYTES = 1u << 8;
 
 struct statistics
 {

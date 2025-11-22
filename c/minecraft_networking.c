@@ -13,51 +13,61 @@ const __s64 STATUS_REQUEST_LEN = 2;
 const __s64 PING_REQUEST_LEN = 10;
 const __s64 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
 
-struct varint_value {
+struct varint_value
+{
     int value;
     unsigned int bytes; // 1 to 5 bytes
 };
 
 static __always_inline struct varint_value varint(int value, unsigned int bytes)
 {
-    return (struct varint_value) { value, bytes };
+    return (struct varint_value){value, bytes};
 }
 
 _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
 
-
 __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *end, __u8 max_size)
 {
     // Byte 1
-    if (max_size < 1 || start >= end) goto error;
-    
+    if (max_size < 1 || start >= end)
+        goto error;
+
     register __u8 b = *start++;
     register __s32 result = (b & 0x7F);
-    if (!(b & 0x80)) return varint(result, 1);
-    
+    if (!(b & 0x80))
+        return varint(result, 1);
+
     // Byte 2
-    if (max_size < 2 || start >= end) goto error;
+    if (max_size < 2 || start >= end)
+        goto error;
     b = *start++;
     result |= ((b & 0x7F) << 7);
-    if (!(b & 0x80)) return varint(result, 2);
-    
+    if (!(b & 0x80))
+        return varint(result, 2);
+
     // Byte 3
-    if (max_size < 3 || start >= end) goto error;
+    if (max_size < 3 || start >= end)
+        goto error;
     b = *start++;
     result |= ((b & 0x7F) << 14);
-    if (!(b & 0x80)) return varint(result, 3);
-    
+    if (!(b & 0x80))
+        return varint(result, 3);
+
     // Byte 4
-    if (max_size < 4 || start >= end) goto error;
+    if (max_size < 4 || start >= end)
+        goto error;
     b = *start++;
     result |= ((b & 0x7F) << 21);
-    if (!(b & 0x80)) return varint(result, 4);
-    
+    if (!(b & 0x80))
+        return varint(result, 4);
+
     // Byte 5
-    if (max_size < 5 || start >= end) goto error;
+    if (max_size < 5 || start >= end)
+        goto error;
     b = *start;
     result |= ((b & 0x7F) << 28);
-    if (!(b & 0x80)) return varint(result, 5);
+    if (!(b & 0x80))
+        return varint(result, 5);
 error:
     return varint(0, 0);
 }
@@ -108,14 +118,13 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *start, __u8 *en
         return 0;
     };
 
-
     if (reader_index + varint.bytes > end)
     {
         return 0;
     }
 
     // bounce check, invalid username
-    if (varint.value < 1 || varint.value > 16 * ( ONLY_ASCII_NAMES ? 1 : 3 ))
+    if (varint.value < 1 || varint.value > 16 * (ONLY_ASCII_NAMES ? 1 : 3))
     {
         return 0;
     }
@@ -176,7 +185,6 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *start, __u8 *en
                 reader_index += key_lenu;
                 // signaturey length
                 varint = read_varint_sized(reader_index, end, 2);
-
 
                 if (!varint.bytes)
                 {
@@ -275,7 +283,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *start, __u8 *end,
     };
     reader_index += varint.bytes;
 
-    //packet id
+    // packet id
     varint = read_varint_sized(reader_index, end, 1);
     if (!varint.bytes || varint.value != 0x00)
     {
@@ -283,7 +291,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *start, __u8 *end,
     };
     reader_index += varint.bytes;
 
-    // protocol version 
+    // protocol version
     varint = read_varint_sized(reader_index, end, 5);
     if (!varint.bytes)
     {
@@ -317,7 +325,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *start, __u8 *end,
     reader_index += 2;
 
     // intention
-    varint = read_varint_sized(reader_index, end, 1);   
+    varint = read_varint_sized(reader_index, end, 1);
 
     if (!varint.bytes)
     {
@@ -334,9 +342,8 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *start, __u8 *end,
     }
     else
     {
-        return 0; 
+        return 0;
     }
-
 
     reader_index += varint.bytes;
 
