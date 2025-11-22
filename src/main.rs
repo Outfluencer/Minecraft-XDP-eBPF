@@ -386,7 +386,6 @@ fn track_stats(
         SYN.inc_by(total.syn);
         TCP_BYPASS.inc_by(total.tcp_bypass);
 
-
         let guard = dummy_mutex
             .lock()
             .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
