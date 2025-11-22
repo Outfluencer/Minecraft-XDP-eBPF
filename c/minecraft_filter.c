@@ -361,7 +361,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     __u32 key = 0;
     struct statistics *stats_ptr = bpf_map_lookup_elem(&stats_map, &key);
 
-    if(!stats_ptr) 
+    if(!stats_ptr)
     {
         // this should be impossible
         return XDP_ABORTED;
