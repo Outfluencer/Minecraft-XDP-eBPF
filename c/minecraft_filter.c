@@ -165,7 +165,7 @@ static __always_inline __s32 block_and_drop(__u64 raw_packet_len, struct statist
 
 /*
  * Tries to update the initial state
- * If unsuccessfull drops the packet, otherwise pass
+ * If unsuccessful drops the packet, otherwise pass
  */
 static __always_inline __s32 update_state_or_drop(__u64 packet_size, struct statistics *stats_ptr, struct initial_state *initial_state, struct ipv4_flow_key *flow_key)
 {
