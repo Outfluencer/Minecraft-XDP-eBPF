@@ -575,7 +575,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     }
     return XDP_PASS;
 
-// Using this labels drasticly reduce the file size
+// Using this labels drastically reduce the file size
 drop:
     count_stats(stats_ptr, DROPPED_PACKET, 1);
     count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
