@@ -387,7 +387,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         #if BLOCK_IPS
         __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
         if (blocked)
-        {        
+        {
             goto drop;
         }
         #endif
