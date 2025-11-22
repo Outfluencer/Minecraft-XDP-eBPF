@@ -355,7 +355,6 @@ fn track_stats(
             total.syn += cpu_stat.syn;
             total.tcp_bypass += cpu_stat.tcp_bypass;
         }
-        
         info!(
             "Stats: Incoming: {} bytes, Dropped: {} bytes, Packets Dropped: {}, Verified: {}, Syn: {}, Bypass: {}, State Switches: {}, Drop Conn: {}, IP Blocks: {}",
             total.incoming_bytes,
