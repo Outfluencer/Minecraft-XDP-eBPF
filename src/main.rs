@@ -1,11 +1,10 @@
 use anyhow::Result;
 use aya::{
     Ebpf, include_bytes_aligned,
-    maps::{HashMap, MapData},
+    maps::{HashMap, MapData, PerCpuArray, PerCpuValues},
     programs::{Xdp, XdpFlags},
 };
-use common::Ipv4FlowKey;
-use env_logger::{Builder, Env};
+use common::{Ipv4FlowKey, Statistics};
 use libc::{CLOCK_BOOTTIME, clock_gettime, timespec};
 use log::{debug, error, info};
 use signal_hook::consts::TERM_SIGNALS;
@@ -19,6 +18,27 @@ use std::{
     thread,
     time::Duration,
 };
+use clap::Parser;
+use file_rotate::{FileRotate, ContentLimit, compression::Compression, suffix::AppendCount};
+use lazy_static::lazy_static;
+use prometheus::{IntCounter, register_int_counter};
+use colored::Colorize;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Network interface to attach to
+    #[arg(required_unless_present = "license")]
+    interface: Option<String>,
+
+    /// Print license information
+    #[arg(long, action)]
+    license: bool,
+
+    /// Address to bind the metrics server to
+    #[arg(long)]
+    metrics_addr: Option<String>,
+}
 
 mod common;
 
@@ -27,6 +47,88 @@ const SECOND_TO_NANOS: u64 = 1_000_000_000;
 const OLD_CONNECTION_TIMEOUT: u64 = 60; // every 60 seconds
 const BLOCKED_IP_TIMEOUT: u64 = 60; // every 60 seconds
 const THROTTLE_CLEAR_CYCLE: u64 = 3; // every 3 seconds
+const STATS_TRACKING_CYCLE: u64 = 10; // every 10 seconds
+
+lazy_static! {
+    static ref INCOMING_BYTES: IntCounter = register_int_counter!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
+    static ref DROPPED_BYTES: IntCounter = register_int_counter!("minecraft_dropped_bytes", "Total dropped bytes").unwrap();
+    static ref IP_BLOCKS: IntCounter = register_int_counter!("minecraft_ip_blocks", "Total IP blocks").unwrap();
+    static ref VERIFIED: IntCounter = register_int_counter!("minecraft_verified_connections", "Total verified connections").unwrap();
+    static ref DROPPED_PACKETS: IntCounter = register_int_counter!("minecraft_dropped_packets", "Total dropped packets").unwrap();
+    static ref STATE_SWITCHES: IntCounter = register_int_counter!("minecraft_state_switches", "Total state switches").unwrap();
+    static ref DROP_CONNECTION: IntCounter = register_int_counter!("minecraft_dropped_connections", "Total dropped connections").unwrap();
+    static ref SYN: IntCounter = register_int_counter!("minecraft_syn_packets", "Total SYN packets").unwrap();
+    static ref TCP_BYPASS: IntCounter = register_int_counter!("minecraft_tcp_bypass", "Total TCP bypass attempts").unwrap();
+}
+
+fn setup_logger() -> Result<(), anyhow::Error> {
+    let colors = fern::colors::ColoredLevelConfig::new()
+        .debug(fern::colors::Color::Magenta)
+        .info(fern::colors::Color::Green)
+        .warn(fern::colors::Color::Yellow)
+        .error(fern::colors::Color::Red);
+
+    let level_filter = match std::env::var("RUST_LOG") {
+        Ok(var) => match var.to_lowercase().as_str() {
+            "off" => log::LevelFilter::Off,
+            "error" => log::LevelFilter::Error,
+            "warn" => log::LevelFilter::Warn,
+            "info" => log::LevelFilter::Info,
+            "debug" => log::LevelFilter::Debug,
+            "trace" => log::LevelFilter::Trace,
+            _ => log::LevelFilter::Info,
+        },
+        Err(_) => {
+            #[cfg(debug_assertions)]
+            {
+                log::LevelFilter::Debug
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                log::LevelFilter::Info
+            }
+        }
+    };
+
+    let console_dispatch = fern::Dispatch::new()
+        .format(move |out, message, record| {
+            out.finish(format_args!(
+                "{} {}{}{} {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string().white(),
+                "[".bright_black(),
+                colors.color(record.level()),
+                "]".bright_black(),
+                message
+            ))
+        })
+        .chain(std::io::stdout());
+
+    let file_dispatch = fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{} [{}] {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                record.level(),
+                message
+            ))
+        })
+        .chain(Box::new(FileRotate::new(
+            "xdp-loader.log",
+            AppendCount::new(5),
+            ContentLimit::Bytes(100 * 1024 * 1024), // 100 MB
+            Compression::None,
+            #[cfg(unix)]
+            None,
+        )) as Box<dyn std::io::Write + Send>);
+
+    fern::Dispatch::new()
+        .level(level_filter)
+        .chain(console_dispatch)
+        .chain(file_dispatch)
+        .apply()?;
+
+    Ok(())
+}
 
 fn shutdown(running: Arc<AtomicBool>, condvar: Arc<Condvar>) {
     if running.load(Ordering::SeqCst) {
@@ -37,11 +139,8 @@ fn shutdown(running: Arc<AtomicBool>, condvar: Arc<Condvar>) {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <interface> or '--license'", args[0]);
-        return;
-    }
+    let args = Args::parse();
+
     if std::env::var("RUST_LOG").is_err() {
         unsafe {
             #[cfg(debug_assertions)]
@@ -50,13 +149,12 @@ fn main() {
             std::env::set_var("RUST_LOG", "info");
         }
     }
-    if args[1] == "--license" {
+
+    if args.license {
         println!(include_str!("../LICENSE"));
         return;
     }
-    Builder::from_env(Env::default())
-        .format_timestamp_secs()
-        .init();
+    setup_logger().expect("Failed to setup logger");
 
     info!("Loading minecraft xdp filter v1.9 by Outfluencer...");
 
@@ -64,12 +162,19 @@ fn main() {
     let condvar = Arc::new(Condvar::new());
 
     start_shutdown_hook(running.clone(), condvar.clone());
+    if let Some(addr) = args.metrics_addr {
+        start_metrics_server(addr);
+    }
 
-    match load(args[1].as_str(), running.clone(), condvar.clone()) {
-        Err(e) => {
-            error!("Failed to load BPF program: {}", e);
+    if let Some(interface) = args.interface {
+        match load(&interface, running.clone(), condvar.clone()) {
+            Err(e) => {
+                error!("Failed to load BPF program: {}", e);
+            }
+            _ => {}
         }
-        _ => {}
+    } else {
+        error!("Interface is required unless --license is specified");
     }
 
     shutdown(running, condvar);
@@ -84,6 +189,36 @@ fn start_shutdown_hook(arc: Arc<AtomicBool>, condvar: Arc<Condvar>) {
             info!("Received termination signal: {signal}");
             shutdown(arc, condvar);
             break; // Stop on first termination signal
+        }
+    });
+}
+
+fn start_metrics_server(addr: String) {
+    thread::spawn(move || {
+        let server = match tiny_http::Server::http(&addr) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Failed to start metrics server: {}", e);
+                return;
+            }
+        };
+        info!("Prometheus metrics server running on {}/metrics", addr);
+        for request in server.incoming_requests() {
+            if request.url() == "/metrics" {
+                info!("Received metrics request from {:?}", request.remote_addr());
+                use prometheus::Encoder;
+                let encoder = prometheus::TextEncoder::new();
+                let metric_families = prometheus::gather();
+                let mut buffer = vec![];
+                if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
+                    error!("Failed to encode metrics: {}", e);
+                    continue;
+                }
+                let response = tiny_http::Response::from_data(buffer);
+                let _ = request.respond(response);
+            } else {
+                let _ = request.respond(tiny_http::Response::empty(404));
+            }
         }
     });
 }
@@ -110,6 +245,10 @@ fn load(
         interface, result
     );
 
+    for (name, _) in ebpf.maps() {
+        info!("Found map: {}", name);
+    }
+
     let player_connection_map = {
         let map = ebpf
             .take_map("player_connection_map")
@@ -135,6 +274,14 @@ fn load(
         HashMap::<MapData, u32, u64>::try_from(map)?
     };
     let blocked_ips_ref: Arc<Mutex<HashMap<MapData, u32, u64>>> = Arc::new(Mutex::new(blocked_ips));
+    let stats = {
+        let map = ebpf
+            .take_map("stats_map")
+            .ok_or_else(|| anyhow::anyhow!("Can't take map 'stats_map'"))?;
+        PerCpuArray::<MapData, Statistics>::try_from(map)?
+    };
+
+    let stats_ref: Arc<Mutex<PerCpuArray<MapData, Statistics>>> = Arc::new(Mutex::new(stats));
 
     let handle1 = spawn_old_connection_clear(
         "clear-old",
@@ -148,7 +295,8 @@ fn load(
         condvar.clone(),
         connection_throttle_ref,
     )?;
-    let handle3 = spawn_block_clear("clear-blocks", running, condvar, blocked_ips_ref)?;
+    let handle3 = spawn_block_clear("clear-blocks", running.clone(), condvar.clone(), blocked_ips_ref)?;
+    let handle4 = spawn_stats_thread("track-stats", running.clone(), condvar.clone(), stats_ref.clone())?;
 
     let _ = handle1
         .join()
@@ -159,7 +307,90 @@ fn load(
     let _ = handle3
         .join()
         .map_err(|e| anyhow::anyhow!("clear-blocks thread panicked: {:?}", e))?;
+    let _ = handle4
+        .join()
+        .map_err(|e| anyhow::anyhow!("track-stats thread panicked: {:?}", e))?;
 
+    Ok(())
+}
+
+fn spawn_stats_thread(
+    name: &'static str,
+    running: Arc<AtomicBool>,
+    condvar: Arc<Condvar>,
+    stats_ref: Arc<Mutex<PerCpuArray<MapData, Statistics>>>,
+) -> Result<thread::JoinHandle<()>, anyhow::Error> {
+    thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            if let Err(e) = track_stats(running.clone(), condvar.clone(), stats_ref) {
+                error!("Failed to track stats: {:?}", e);
+                shutdown(running, condvar);
+            }
+        })
+        .map_err(|e| e.into())
+}
+
+fn track_stats(
+    running: Arc<AtomicBool>,
+    condvar: Arc<Condvar>,
+    stats_ref: Arc<Mutex<PerCpuArray<MapData, Statistics>>>,
+) -> Result<(), anyhow::Error> {
+    let dummy_mutex = Mutex::new(());
+    while running.load(Ordering::SeqCst) {
+        let mut stats = stats_ref
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
+
+        let values = stats.get(&0, 0)?;
+        let mut total = Statistics::default();
+        for cpu_stat in values.iter() {
+            total.incoming_bytes += cpu_stat.incoming_bytes;
+            total.dropped_bytes += cpu_stat.dropped_bytes;
+            total.ip_blocks += cpu_stat.ip_blocks;
+            total.verified += cpu_stat.verified;
+            total.dropped_packets += cpu_stat.dropped_packets;
+            total.state_switches += cpu_stat.state_switches;
+            total.drop_connection += cpu_stat.drop_connection;
+            total.syn += cpu_stat.syn;
+            total.tcp_bypass += cpu_stat.tcp_bypass;
+        }
+        info!(
+            "Stats: Incoming: {} bytes, Dropped: {} bytes, Packets Dropped: {}, Verified: {}, Syn: {}, Bypass: {}, State Switches: {}, Drop Conn: {}, IP Blocks: {}",
+            total.incoming_bytes,
+            total.dropped_bytes,
+            total.dropped_packets,
+            total.verified,
+            total.syn,
+            total.tcp_bypass,
+            total.state_switches,
+            total.drop_connection,
+            total.ip_blocks
+        );
+      
+        // Reset stats
+        let zeros = vec![Statistics::default(); values.len()];
+        let new_values = PerCpuValues::try_from(zeros)?;
+        stats.set(0, new_values, 0)?;
+
+        // Update Prometheus metrics
+        INCOMING_BYTES.inc_by(total.incoming_bytes);
+        DROPPED_BYTES.inc_by(total.dropped_bytes);
+        IP_BLOCKS.inc_by(total.ip_blocks);
+        VERIFIED.inc_by(total.verified);
+        DROPPED_PACKETS.inc_by(total.dropped_packets);
+        STATE_SWITCHES.inc_by(total.state_switches);
+        DROP_CONNECTION.inc_by(total.drop_connection);
+        SYN.inc_by(total.syn);
+        TCP_BYPASS.inc_by(total.tcp_bypass);
+
+        let guard = dummy_mutex
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
+        let _ = condvar
+            .wait_timeout(guard, Duration::from_secs(STATS_TRACKING_CYCLE))
+            .map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
+    }
     Ok(())
 }
 

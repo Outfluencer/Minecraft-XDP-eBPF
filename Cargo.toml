@@ -11,6 +11,14 @@ log = "0.4.27"
 signal-hook = "0.3.18"
 anyhow = "1.0.98"
 libc = "0.2.174"
+prometheus = "0.13"
+lazy_static = "1.4"
+tiny_http = "0.12"
+fern = { version = "0.6", features = ["colored"] }
+colored = "2.0"
+chrono = "0.4"
+file-rotate = "0.7"
+clap = { version = "4.5", features = ["derive"] }
 
 [profile.release]
 opt-level = 3
