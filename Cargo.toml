@@ -9,7 +9,7 @@ bytemuck = { version = "1.23.1", features = ["derive"] }
 env_logger = { version = "0.11.8" }
 log = "0.4.27"
 signal-hook = "0.3.18"
-anyhow = "1.0.98"
+anyhow = "1.0.100"
 libc = "0.2.174"
 prometheus = "0.13"
 lazy_static = "1.4"
