@@ -17,7 +17,7 @@ tiny_http = "0.12"
 fern = { version = "0.7", features = ["colored"] }
 colored = "2.0"
 chrono = "0.4"
-file-rotate = "0.7"
+file-rotate = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 
 [profile.release]
