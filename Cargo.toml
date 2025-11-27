@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 aya = "0.13.1"
-bytemuck = { version = "1.24.0", features = ["derive"] }
 log = "0.4.28"
 signal-hook = "0.3.18"
 anyhow = "1.0.100"
