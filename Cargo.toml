@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 aya = "0.13.1"
-bytemuck = { version = "1.24.0", features = ["derive"] }
 log = "0.4.28"
 signal-hook = "0.3.18"
 anyhow = "1.0.100"
@@ -14,7 +13,7 @@ prometheus = "0.14"
 lazy_static = "1.4"
 tiny_http = "0.12"
 fern = { version = "0.7", features = ["colored"] }
-colored = "2.0"
+colored = "3.0"
 chrono = "0.4"
 file-rotate = "0.8"
 clap = { version = "4.5", features = ["derive"] }
