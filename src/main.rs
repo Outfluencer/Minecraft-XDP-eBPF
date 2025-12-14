@@ -1,7 +1,7 @@
 use anyhow::Result;
 use aya::{
     Ebpf, include_bytes_aligned,
-    maps::{HashMap, MapData, PerCpuArray, PerCpuValues, LpmTrie},
+    maps::{HashMap, MapData, PerCpuArray, PerCpuValues, LpmTrie, lpm_trie::Key},
     programs::{Xdp, XdpFlags},
 };
 use common::{Ipv4FlowKey, Statistics};
@@ -279,7 +279,8 @@ fn load(
 
                 if let Ok(ip_addr) = Ipv4Addr::from_str(ip_str) {
                     let key = u32::from(ip_addr).to_be();
-                    if let Err(e) = whitelist_map.insert(&key, prefix_len, 1) {
+                    let lpm_key = Key::new(prefix_len, key);
+                    if let Err(e) = whitelist_map.insert(&lpm_key, 1, 0) {
                          error!("Failed to add {}/{} to whitelist: {}", ip_str, prefix_len, e);
                     } else {
                          info!("Added {}/{} to whitelist", ip_str, prefix_len);
