@@ -26,6 +26,15 @@ The default protected ports are 25000 to 26000, if you want to change that,
 fully remove the arguments from the `/c/build.sh` file or change them to the port range you need.  
 Then recompile the project. The xdp filter will now filter on the specified port range or on 25565 if nothing is specified.  
 
+# Whitelist
+You can whitelist IP addresses or CIDR ranges by adding them to the `whitelist.conf` file in the same directory as the executable.
+The whitelist is loaded at startup.
+Format:
+```
+127.0.0.1
+192.168.0.0/24
+```
+
 # More
 BungeeCord plugin that utilizes this filter to block ips that are causing exceptions
 https://github.com/Outfluencer/Minecraft-XDP-eBPF-Server-Addon/

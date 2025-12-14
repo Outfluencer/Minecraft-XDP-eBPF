@@ -33,6 +33,20 @@
 // Minecraft server port
 const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
 
+struct ipv4_lpm_key {
+    __u32 prefixlen;
+    __u32 data;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+    __uint(max_entries, 1024);
+    __type(key, struct ipv4_lpm_key);
+    __type(value, __u32);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} whitelist_map SEC(".maps");
+
 struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -376,6 +390,12 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     }
 
     __u32 src_ip = ip->saddr;
+
+    // Whitelist check
+    struct ipv4_lpm_key lpm_key = { .prefixlen = 32, .data = src_ip };
+    if (bpf_map_lookup_elem(&whitelist_map, &lpm_key)) {
+        return XDP_PASS;
+    }
 
     // stateless new connection checks
     if (tcp->syn)
