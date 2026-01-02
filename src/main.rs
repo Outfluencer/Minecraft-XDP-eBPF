@@ -1,7 +1,7 @@
 use anyhow::Result;
 use aya::{
     Ebpf, include_bytes_aligned,
-    maps::{HashMap, MapData, PerCpuArray, PerCpuValues},
+    maps::{HashMap, MapData, PerCpuArray, PerCpuValues, LpmTrie, lpm_trie::Key},
     programs::{Xdp, XdpFlags},
 };
 use common::{Ipv4FlowKey, Statistics};
@@ -17,6 +17,10 @@ use std::{
     },
     thread,
     time::Duration,
+    fs::File,
+    io::{BufRead, BufReader},
+    net::Ipv4Addr,
+    str::FromStr,
 };
 use clap::Parser;
 use file_rotate::{FileRotate, ContentLimit, compression::Compression, suffix::AppendCount};
@@ -247,6 +251,47 @@ fn load(
 
     for (name, _) in ebpf.maps() {
         info!("Found map: {}", name);
+    }
+
+    // Load whitelist
+    let mut whitelist_map = {
+        let map = ebpf
+            .take_map("whitelist_map")
+            .ok_or_else(|| anyhow::anyhow!("Can't take map 'whitelist_map'"))?;
+        LpmTrie::<MapData, u32, u32>::try_from(map)?
+    };
+
+    info!("Loading whitelist from whitelist.conf...");
+    if let Ok(file) = File::open("whitelist.conf") {
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            if let Ok(line) = line {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+
+                let (ip_str, prefix_len) = if let Some((ip, prefix)) = line.split_once('/') {
+                    (ip, u32::from_str(prefix).unwrap_or(32))
+                } else {
+                    (line, 32)
+                };
+
+                if let Ok(ip_addr) = Ipv4Addr::from_str(ip_str) {
+                    let key = u32::from(ip_addr).to_be();
+                    let lpm_key = Key::new(prefix_len, key);
+                    if let Err(e) = whitelist_map.insert(&lpm_key, 1, 0) {
+                         error!("Failed to add {}/{} to whitelist: {}", ip_str, prefix_len, e);
+                    } else {
+                         info!("Added {}/{} to whitelist", ip_str, prefix_len);
+                    }
+                } else {
+                    error!("Invalid IP address in whitelist: {}", ip_str);
+                }
+            }
+        }
+    } else {
+        error!("Could not open whitelist.conf - whitelist will be empty");
     }
 
     let player_connection_map = {
