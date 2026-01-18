@@ -1,7 +1,6 @@
 use aya::Pod;
 use std::hash::Hash;
 
-/// Equivalent to `struct ipv4_flow_key`
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ipv4AddrImpl {
