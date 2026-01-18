@@ -1,8 +1,9 @@
 use aya::Pod;
+use std::hash::Hash;
 
 /// Equivalent to `struct ipv4_flow_key`
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ipv4FlowKey {
     pub src_ip: u32,
     pub dst_ip: u32,
@@ -17,7 +18,7 @@ const _: () = assert!(std::mem::size_of::<Ipv4FlowKey>() == 12);
 
 /// Equivalent to `struct statistics`
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Statistics {
     pub ip_blocks: u64,
     pub verified: u64,
