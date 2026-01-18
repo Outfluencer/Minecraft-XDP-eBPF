@@ -1,3 +1,15 @@
+#ifndef HIT_COUNT
+#define HIT_COUNT 10
+#endif
+
+#ifndef START_PORT
+#define START_PORT 25000
+#endif
+#ifndef END_PORT
+#define END_PORT 26000
+#endif
+
+
 #include <stddef.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
@@ -9,33 +21,18 @@
 #include "minecraft_networking.c"
 #include "stats.h"
 
-#ifndef HIT_COUNT
-#define HIT_COUNT 10
-#endif
-
-// make ports configurable during compilation
-#ifndef START_PORT
-#define START_PORT 25565
-#endif
-
-#ifndef END_PORT
-#define END_PORT 25565
-#endif
-
-#ifndef BLOCK_IPS
-#define BLOCK_IPS 1
-#endif
-
-#ifndef CONNECTION_THROTTLE
-#define CONNECTION_THROTTLE 1
-#endif
-
 // Minecraft server port
 const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
 
 struct
 {
-    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(type, 
+        #if IP_AND_PORT_PER_CPU
+        BPF_MAP_TYPE_LRU_PERCPU_HASH
+        #else
+        BPF_MAP_TYPE_LRU_HASH
+        #endif
+    );
     __uint(max_entries, 4096);
     __type(key, struct ipv4_flow_key);
     __type(value, struct initial_state);
@@ -43,7 +40,13 @@ struct
 
 struct
 {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, 
+        #if IP_AND_PORT_PER_CPU
+        BPF_MAP_TYPE_LRU_PERCPU_HASH
+        #else
+        BPF_MAP_TYPE_LRU_HASH
+        #endif
+    );
     __uint(max_entries, 65535);
     __type(key, struct ipv4_flow_key);
     __type(value, __u64); // last seen timestamp
@@ -52,7 +55,13 @@ struct
 
 struct
 {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, 
+        #if IP_PER_CPU
+        BPF_MAP_TYPE_PERCPU_HASH
+        #else
+        BPF_MAP_TYPE_HASH
+        #endif
+    );
     __uint(max_entries, 65535);
     __type(key, __u32);   // ipv4 address (4 bytes)
     __type(value, __u64); // blocked at time
@@ -61,13 +70,20 @@ struct
 
 struct
 {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, 
+        #if IP_PER_CPU
+        BPF_MAP_TYPE_PERCPU_HASH
+        #else
+        BPF_MAP_TYPE_HASH
+        #endif
+    );
     __uint(max_entries, 65535);
     __type(key, __u32);   // ipv4 address (4 bytes)
     __type(value, __u32); // how many connections
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } connection_throttle SEC(".maps");
 
+#if PROMETHEUS_METRICS
 struct
 {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -76,6 +92,7 @@ struct
     __type(value, struct statistics);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } stats_map SEC(".maps");
+#endif
 
 static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp)
 {
@@ -93,6 +110,7 @@ static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp)
  */
 static __always_inline void count_stats(struct statistics *stats_ptr, __u32 bitmask, __u64 amount)
 {
+    #if PROMETHEUS_METRICS
     if (bitmask & INCOMING_BYTES)
     {
         stats_ptr->incoming_bytes += amount;
@@ -137,6 +155,7 @@ static __always_inline void count_stats(struct statistics *stats_ptr, __u32 bitm
     {
         stats_ptr->tcp_bypass += amount;
     }
+    #endif
 }
 
 /*
@@ -203,7 +222,7 @@ static __always_inline __u32 switch_to_verified(__u64 raw_packet_len, struct sta
     count_stats(stats_ptr, VERIFIED, 1);
     return XDP_PASS;
 }
-#ifdef STATELESS
+#if STATELESS
 static __u32 check_options(__u8 *opt_ptr, __u8 *opt_end, __u8 *packet_end)
 {
     __u8 *reader_index = opt_ptr;
@@ -356,14 +375,20 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_ABORTED;
     }
 
-    __u32 key = 0;
-    struct statistics *stats_ptr = bpf_map_lookup_elem(&stats_map, &key);
+     bpf_printk("CPU: %u SRC: %x", bpf_get_smp_processor_id(), ip->saddr);
 
+    __u32 key = 0;
+    
+    #if PROMETHEUS_METRICS
+    struct statistics *stats_ptr = bpf_map_lookup_elem(&stats_map, &key);
     if (!stats_ptr)
     {
         // this should be impossible
         return XDP_ABORTED;
     }
+    #else
+    struct statistics *stats_ptr = 0;
+    #endif
 
     __u64 raw_packet_len = (__u64)(data_end - data);
     count_stats(stats_ptr, INCOMING_BYTES, raw_packet_len);
@@ -391,7 +416,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 #endif
 
 // this works perfectly for now but, experimental
-#ifdef STATELESS
+#if STATELESS
         /* PARSE TCP OPTIONS*/
         __u8 *opt_ptr = (__u8 *)tcp + sizeof(struct tcphdr);
         __u32 opts_len = tcp_hdr_len - sizeof(struct tcphdr);
@@ -589,5 +614,5 @@ switch_to_verified:
     return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }
 
-char _license[] SEC("license") = "Proprietary";
+char _license[] SEC("license") = "GPL";
 // bpf_printk("no payload seq %lu, ack %lu", __builtin_bswap32(tcp->seq), __builtin_bswap32(tcp->ack_seq));

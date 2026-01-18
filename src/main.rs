@@ -1,11 +1,13 @@
 use anyhow::Result;
 use aya::{
     Ebpf, include_bytes_aligned,
-    maps::{HashMap, MapData, PerCpuArray, PerCpuValues},
+    maps::{HashMap, MapData, PerCpuArray, PerCpuHashMap, PerCpuValues},
     programs::{Xdp, XdpFlags},
 };
+use anyhow::Context;
+
 use common::{Ipv4FlowKey, Statistics};
-use libc::{CLOCK_BOOTTIME, clock_gettime, timespec};
+use libc::{CLOCK_MONOTONIC, clock_gettime, timespec};
 use log::{debug, error, info};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Signals;
@@ -23,6 +25,9 @@ use file_rotate::{FileRotate, ContentLimit, compression::Compression, suffix::Ap
 use lazy_static::lazy_static;
 use prometheus::{IntCounter, register_int_counter};
 use colored::Colorize;
+use aya::Pod;
+
+use crate::mapimpl::XdpMapAbstraction;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -36,19 +41,23 @@ struct Args {
     license: bool,
 
     /// Address to bind the metrics server to
+    #[cfg(prometheus_metrics)]
     #[arg(long)]
     metrics_addr: Option<String>,
 }
 
 mod common;
+mod mapimpl;
 
 const SECOND_TO_NANOS: u64 = 1_000_000_000;
 
 const OLD_CONNECTION_TIMEOUT: u64 = 60; // every 60 seconds
 const BLOCKED_IP_TIMEOUT: u64 = 60; // every 60 seconds
 const THROTTLE_CLEAR_CYCLE: u64 = 3; // every 3 seconds
+#[cfg(prometheus_metrics)]
 const STATS_TRACKING_CYCLE: u64 = 10; // every 10 seconds
 
+#[cfg(prometheus_metrics)]
 lazy_static! {
     static ref INCOMING_BYTES: IntCounter = register_int_counter!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
     static ref DROPPED_BYTES: IntCounter = register_int_counter!("minecraft_dropped_bytes", "Total dropped bytes").unwrap();
@@ -162,22 +171,30 @@ fn main() {
     let condvar = Arc::new(Condvar::new());
 
     start_shutdown_hook(running.clone(), condvar.clone());
+
+    #[cfg(prometheus_metrics)]
     if let Some(addr) = args.metrics_addr {
         start_metrics_server(addr);
     }
 
+    let mut epbf: Option<Ebpf> = None;
     if let Some(interface) = args.interface {
         match load(&interface, running.clone(), condvar.clone()) {
             Err(e) => {
                 error!("Failed to load BPF program: {}", e);
             }
-            _ => {}
+            Ok(value) => {
+                epbf = Some(value);
+            }
         }
+        //let lol = load(&interface, running.clone(), condvar.clone());
+        //epbf = Some(lol.unwrap())
     } else {
         error!("Interface is required unless --license is specified");
     }
 
     shutdown(running, condvar);
+    drop(epbf);
 
     info!("Good bye!");
 }
@@ -192,7 +209,7 @@ fn start_shutdown_hook(arc: Arc<AtomicBool>, condvar: Arc<Condvar>) {
         }
     });
 }
-
+#[cfg(prometheus_metrics)]
 fn start_metrics_server(addr: String) {
     thread::spawn(move || {
         let server = match tiny_http::Server::http(&addr) {
@@ -223,11 +240,12 @@ fn start_metrics_server(addr: String) {
     });
 }
 
+
 fn load(
     interface: &str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-) -> Result<(), anyhow::Error> {
+) -> Result<Ebpf, anyhow::Error> {
     let data = include_bytes_aligned!(concat!(env!("CARGO_MANIFEST_DIR"), "/c/minecraft_filter.o"));
     info!("Loaded BPF program (size: {})", data.len());
 
@@ -237,7 +255,7 @@ fn load(
         .program_mut("minecraft_filter")
         .ok_or_else(|| anyhow::anyhow!("Program 'minecraft_filter' not found"))?
         .try_into()?;
-    programm.load()?;
+    programm.load().unwrap();
 
     let result = programm.attach(interface, XdpFlags::empty())?;
     info!(
@@ -250,30 +268,53 @@ fn load(
     }
 
     let player_connection_map = {
-        let map = ebpf
-            .take_map("player_connection_map")
-            .ok_or_else(|| anyhow::anyhow!("Can't take map 'player_connection_map'"))?;
-        HashMap::<MapData, Ipv4FlowKey, u64>::try_from(map)?
+        let map = ebpf.take_map("player_connection_map").ok_or_else(|| anyhow::anyhow!("Can't take map 'player_connection_map'"))?;
+        #[cfg(ip_and_port_per_cpu)]
+        {
+            info!("Using PerCpuHashMap for player_connection_map");
+            PerCpuHashMap::<MapData, Ipv4FlowKey, u64>::try_from(map).context("try to get player_connection_map PerCpuHashMap")?
+        }
+        #[cfg(not(ip_and_port_per_cpu))]
+        {
+
+            info!("Using HashMap for player_connection_map");
+            HashMap::<MapData, Ipv4FlowKey, u64>::try_from(map).context("try to get player_connection_map HashMap")?
+        }
     };
-    let player_connection_map_ref: Arc<Mutex<HashMap<MapData, Ipv4FlowKey, u64>>> =
-        Arc::new(Mutex::new(player_connection_map));
+    let player_connection_map_ref =Arc::new(Mutex::new(player_connection_map));
 
     let connection_throttle = {
-        let map = ebpf
-            .take_map("connection_throttle")
-            .ok_or_else(|| anyhow::anyhow!("Can't take map 'connection_throttle'"))?;
-        HashMap::<MapData, u32, u32>::try_from(map)?
+        let map = ebpf.take_map("connection_throttle").ok_or_else(|| anyhow::anyhow!("Can't take map 'connection_throttle'"))?;
+
+        #[cfg(ip_per_cpu)]
+        {
+            info!("Using PerCpuHashMap for connection_throttle");
+            PerCpuHashMap::<MapData, u32, u32>::try_from(map).context("try to get connection_throttle PerCpuHashMap")?
+        }
+        #[cfg(not(ip_per_cpu))]
+        {
+            info!("Using HashMap for connection_throttle");
+            HashMap::<MapData, u32, u32>::try_from(map).context("try to get connection_throttle HashMap")?
+        }
     };
-    let connection_throttle_ref: Arc<Mutex<HashMap<MapData, u32, u32>>> =
-        Arc::new(Mutex::new(connection_throttle));
+    let connection_throttle_ref = Arc::new(Mutex::new(connection_throttle));
 
     let blocked_ips = {
-        let map = ebpf
-            .take_map("blocked_ips")
-            .ok_or_else(|| anyhow::anyhow!("Can't take map 'blocked_ips'"))?;
-        HashMap::<MapData, u32, u64>::try_from(map)?
+        let map = ebpf.take_map("blocked_ips").ok_or_else(|| anyhow::anyhow!("Can't take map 'blocked_ips'"))?;
+        #[cfg(ip_per_cpu)]
+        {
+            info!("Using PerCpuHashMap for blocked_ips");
+            PerCpuHashMap::<MapData, u32, u64>::try_from(map).context("try to get blocked_ips PerCpuHashMap")?
+        }
+        #[cfg(not(ip_per_cpu))]
+        {
+            info!("Using HashMap for blocked_ips");
+            HashMap::<MapData, u32, u64>::try_from(map).context("try to get blocked_ips HashMap")?
+        }
     };
-    let blocked_ips_ref: Arc<Mutex<HashMap<MapData, u32, u64>>> = Arc::new(Mutex::new(blocked_ips));
+    let blocked_ips_ref = Arc::new(Mutex::new(blocked_ips));
+    
+    #[cfg(prometheus_metrics)]
     let stats = {
         let map = ebpf
             .take_map("stats_map")
@@ -281,6 +322,7 @@ fn load(
         PerCpuArray::<MapData, Statistics>::try_from(map)?
     };
 
+    #[cfg(prometheus_metrics)]
     let stats_ref: Arc<Mutex<PerCpuArray<MapData, Statistics>>> = Arc::new(Mutex::new(stats));
 
     let handle1 = spawn_old_connection_clear(
@@ -296,6 +338,8 @@ fn load(
         connection_throttle_ref,
     )?;
     let handle3 = spawn_block_clear("clear-blocks", running.clone(), condvar.clone(), blocked_ips_ref)?;
+
+    #[cfg(prometheus_metrics)]
     let handle4 = spawn_stats_thread("track-stats", running.clone(), condvar.clone(), stats_ref.clone())?;
 
     let _ = handle1
@@ -307,13 +351,15 @@ fn load(
     let _ = handle3
         .join()
         .map_err(|e| anyhow::anyhow!("clear-blocks thread panicked: {:?}", e))?;
+    #[cfg(prometheus_metrics)]
     let _ = handle4
         .join()
         .map_err(|e| anyhow::anyhow!("track-stats thread panicked: {:?}", e))?;
 
-    Ok(())
+    Ok(ebpf)
 }
 
+#[cfg(prometheus_metrics)]
 fn spawn_stats_thread(
     name: &'static str,
     running: Arc<AtomicBool>,
@@ -331,6 +377,7 @@ fn spawn_stats_thread(
         .map_err(|e| e.into())
 }
 
+#[cfg(prometheus_metrics)]
 fn track_stats(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
@@ -376,7 +423,9 @@ fn track_stats(
         // Update Prometheus metrics
         INCOMING_BYTES.inc_by(total.incoming_bytes);
         DROPPED_BYTES.inc_by(total.dropped_bytes);
+
         IP_BLOCKS.inc_by(total.ip_blocks);
+
         VERIFIED.inc_by(total.verified);
         DROPPED_PACKETS.inc_by(total.dropped_packets);
         STATE_SWITCHES.inc_by(total.state_switches);
@@ -394,12 +443,13 @@ fn track_stats(
     Ok(())
 }
 
-fn spawn_connection_throttle_clear(
+fn spawn_connection_throttle_clear<M,V>(
     name: &'static str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    connection_throttle_ref: Arc<Mutex<HashMap<MapData, u32, u32>>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error> {
+    connection_throttle_ref: Arc<Mutex<M>>,
+) -> Result<thread::JoinHandle<()>, anyhow::Error> where
+    M: mapimpl::XdpMapAbstraction<u32, V> + Send + 'static {
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -413,28 +463,23 @@ fn spawn_connection_throttle_clear(
         .map_err(|e| e.into())
 }
 
-fn connection_throttle_clear(
+fn connection_throttle_clear<M,V>(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    connection_throttle_ref: Arc<Mutex<HashMap<MapData, u32, u32>>>,
-) -> Result<(), anyhow::Error> {
+    connection_throttle_ref: Arc<Mutex<M>>,
+) -> Result<(), anyhow::Error> where
+    M: XdpMapAbstraction<u32, V> + Send + 'static {
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
         let mut map = connection_throttle_ref
             .lock()
             .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
-        let all = map
-            .iter()
-            .filter_map(|res| {
-                match res {
-                    Ok((key, _)) => Some(key),
-                    Err(_) => None, // skip errors
-                }
-            })
-            .collect::<Vec<u32>>();
-        all.iter().for_each(|key| {
-            map.remove(key).ok();
-        });
+        match map.clear() {
+            Ok(_) => {},
+            Err(_) => {
+                error!("Error while clearing connection throttle map");
+            },
+        }
         let guard = dummy_mutex
             .lock()
             .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
@@ -445,12 +490,15 @@ fn connection_throttle_clear(
     Ok(())
 }
 
-fn spawn_old_connection_clear(
+
+
+fn spawn_old_connection_clear<M>(
     name: &'static str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    player_connection_map_ref: Arc<Mutex<HashMap<MapData, Ipv4FlowKey, u64>>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error> {
+    player_connection_map_ref: Arc<Mutex<M>>,
+) -> Result<thread::JoinHandle<()>, anyhow::Error> where
+    M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static {
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -464,53 +512,34 @@ fn spawn_old_connection_clear(
         .map_err(|e| e.into())
 }
 
-fn clear_old_connections(
+fn clear_old_connections<M>(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    player_connection_map_ref: Arc<Mutex<HashMap<MapData, Ipv4FlowKey, u64>>>,
-) -> Result<(), anyhow::Error> {
+    player_connection_map_ref: Arc<Mutex<M>>,
+) -> Result<(), anyhow::Error> where
+    M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static {
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
         let now = uptime_nanos()?;
         debug!("Checking for old connections... {:?}", now);
         let mut amount = 0;
-        let mut map = player_connection_map_ref
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
 
-        let to_remove = map
-            .iter()
-            .filter_map(|res| {
-                amount += 1;
-                match res {
-                    Ok((key, last_update)) => {
-                        if last_update + (OLD_CONNECTION_TIMEOUT * SECOND_TO_NANOS) < now {
-                            Some(key)
-                        } else {
-                            None
-                        }
-                    }
-                    Err(_) => None, // skip errors
-                }
-            })
-            .collect::<Vec<Ipv4FlowKey>>();
-
-        debug!("Map had {} entries now {} will be removed... {:?}", amount, to_remove.len(), now);
-
-
-        to_remove.iter().for_each(|key| {
-            let result = map.remove(key);
-            if result.is_err() {
-                error!(
-                    "Failed to remove connection for key {}: {:?}",
-                    common::flow_key_to_string(key),
-                    result.err()
-                );
-            } else {
-                debug!("Removed old connection: {}", common::flow_key_to_string(key));
+        let mut map = player_connection_map_ref.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
+        let value = map.remove_if(|_, last_update| {
+            if *last_update == 0 {
+                return false;
             }
+            let value = (*last_update) + (OLD_CONNECTION_TIMEOUT * SECOND_TO_NANOS) < now;
+            if value {
+                amount += 1;
+            }
+            value
         });
-
+        if let Err(e) = value {
+            error!("Error while removing old connections: {:?}", e);
+        } else {
+            debug!("Removed {} entries ... {:?}", amount, now);
+        }
         let guard = dummy_mutex
             .lock()
             .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
@@ -521,12 +550,13 @@ fn clear_old_connections(
     Ok(())
 }
 
-fn spawn_block_clear(
+fn spawn_block_clear<M>(
     name: &'static str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    blocked_ips_ref: Arc<Mutex<HashMap<MapData, u32, u64>>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error> {
+    blocked_ips_ref: Arc<Mutex<M>>,
+) -> Result<thread::JoinHandle<()>, anyhow::Error> where
+    M: XdpMapAbstraction<u32, u64> + Send + 'static {
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -538,50 +568,25 @@ fn spawn_block_clear(
         .map_err(|e| e.into())
 }
 
-fn block_clear(
+fn block_clear<M>(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    blocked_ips_ref: Arc<Mutex<HashMap<MapData, u32, u64>>>,
-) -> Result<(), anyhow::Error> {
+    blocked_ips_ref: Arc<Mutex<M>>,
+) -> Result<(), anyhow::Error> where
+    M: XdpMapAbstraction<u32, u64> + Send + 'static {
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
         let now = uptime_nanos()?;
-        let mut map = blocked_ips_ref
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
-        let to_remove = map
-            .iter()
-            .filter_map(|res| {
-                match res {
-                    Ok((key, block_time)) => {
-                        if block_time + (BLOCKED_IP_TIMEOUT * SECOND_TO_NANOS) < now {
-                            Some(key)
-                        } else {
-                            None
-                        }
-                    }
-                    Err(_) => None, // skip errors
+        blocked_ips_ref.lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
+            .remove_if(|_, block_time| {
+                if *block_time == 0 {
+                    return false;
                 }
-            })
-            .collect::<Vec<u32>>();
-        to_remove.iter().for_each(|key| {
-            let result = map.remove(key);
-            if result.is_err() {
-                error!(
-                    "Failed to remove blocked IP {}: {:?}",
-                    common::network_address_to_string(*key),
-                    result.err()
-                );
-            } else {
-                info!("Unblocked IP: {}", common::network_address_to_string(*key));
-            }
-        });
-        let guard = dummy_mutex
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
-        let _ = condvar
-            .wait_timeout(guard, Duration::from_secs(BLOCKED_IP_TIMEOUT))
-            .map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
+                (BLOCKED_IP_TIMEOUT * SECOND_TO_NANOS) + (*block_time) < now
+            })?;
+        let guard = dummy_mutex.lock().map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
+        let _ = condvar.wait_timeout(guard, Duration::from_secs(BLOCKED_IP_TIMEOUT)).map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
     }
     Ok(())
 }
@@ -591,10 +596,11 @@ fn uptime_nanos() -> Result<u64, anyhow::Error> {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    let res = unsafe { clock_gettime(CLOCK_BOOTTIME, &mut ts) };
+    let res = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
     if res == 0 {
         Ok((ts.tv_sec as u64) * SECOND_TO_NANOS + (ts.tv_nsec as u64))
     } else {
-        Err(anyhow::anyhow!("Failed to get uptime"))
+        let err = std::io::Error::last_os_error();
+        Err(anyhow::anyhow!("Failed to get uptime: {}", err))
     }
 }
