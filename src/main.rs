@@ -1,16 +1,25 @@
+use anyhow::Context;
 use anyhow::Result;
 use aya::{
     Ebpf, include_bytes_aligned,
     maps::{HashMap, MapData, PerCpuArray, PerCpuHashMap, PerCpuValues},
     programs::{Xdp, XdpFlags},
 };
-use anyhow::Context;
 
+use crate::common::Ipv4AddrImpl;
+use crate::mapimpl::XdpMapAbstraction;
+use aya::Pod;
+use clap::Parser;
+use colored::Colorize;
 use common::{Ipv4FlowKey, Statistics};
+use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::AppendCount};
+use lazy_static::lazy_static;
 use libc::{CLOCK_MONOTONIC, clock_gettime, timespec};
 use log::{debug, error, info};
+use prometheus::{IntCounter, register_int_counter};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Signals;
+use std::fmt::Display;
 use std::{
     env,
     sync::{
@@ -20,14 +29,6 @@ use std::{
     thread,
     time::Duration,
 };
-use clap::Parser;
-use file_rotate::{FileRotate, ContentLimit, compression::Compression, suffix::AppendCount};
-use lazy_static::lazy_static;
-use prometheus::{IntCounter, register_int_counter};
-use colored::Colorize;
-use aya::Pod;
-
-use crate::mapimpl::XdpMapAbstraction;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -59,15 +60,28 @@ const STATS_TRACKING_CYCLE: u64 = 10; // every 10 seconds
 
 #[cfg(prometheus_metrics)]
 lazy_static! {
-    static ref INCOMING_BYTES: IntCounter = register_int_counter!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
-    static ref DROPPED_BYTES: IntCounter = register_int_counter!("minecraft_dropped_bytes", "Total dropped bytes").unwrap();
-    static ref IP_BLOCKS: IntCounter = register_int_counter!("minecraft_ip_blocks", "Total IP blocks").unwrap();
-    static ref VERIFIED: IntCounter = register_int_counter!("minecraft_verified_connections", "Total verified connections").unwrap();
-    static ref DROPPED_PACKETS: IntCounter = register_int_counter!("minecraft_dropped_packets", "Total dropped packets").unwrap();
-    static ref STATE_SWITCHES: IntCounter = register_int_counter!("minecraft_state_switches", "Total state switches").unwrap();
-    static ref DROP_CONNECTION: IntCounter = register_int_counter!("minecraft_dropped_connections", "Total dropped connections").unwrap();
-    static ref SYN: IntCounter = register_int_counter!("minecraft_syn_packets", "Total SYN packets").unwrap();
-    static ref TCP_BYPASS: IntCounter = register_int_counter!("minecraft_tcp_bypass", "Total TCP bypass attempts").unwrap();
+    static ref INCOMING_BYTES: IntCounter =
+        register_int_counter!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
+    static ref DROPPED_BYTES: IntCounter =
+        register_int_counter!("minecraft_dropped_bytes", "Total dropped bytes").unwrap();
+    static ref IP_BLOCKS: IntCounter =
+        register_int_counter!("minecraft_ip_blocks", "Total IP blocks").unwrap();
+    static ref VERIFIED: IntCounter = register_int_counter!(
+        "minecraft_verified_connections",
+        "Total verified connections"
+    )
+    .unwrap();
+    static ref DROPPED_PACKETS: IntCounter =
+        register_int_counter!("minecraft_dropped_packets", "Total dropped packets").unwrap();
+    static ref STATE_SWITCHES: IntCounter =
+        register_int_counter!("minecraft_state_switches", "Total state switches").unwrap();
+    static ref DROP_CONNECTION: IntCounter =
+        register_int_counter!("minecraft_dropped_connections", "Total dropped connections")
+            .unwrap();
+    static ref SYN: IntCounter =
+        register_int_counter!("minecraft_syn_packets", "Total SYN packets").unwrap();
+    static ref TCP_BYPASS: IntCounter =
+        register_int_counter!("minecraft_tcp_bypass", "Total TCP bypass attempts").unwrap();
 }
 
 fn setup_logger() -> Result<(), anyhow::Error> {
@@ -103,7 +117,10 @@ fn setup_logger() -> Result<(), anyhow::Error> {
         .format(move |out, message, record| {
             out.finish(format_args!(
                 "{} {}{}{} {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string().white(),
+                chrono::Local::now()
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+                    .white(),
                 "[".bright_black(),
                 colors.color(record.level()),
                 "]".bright_black(),
@@ -240,7 +257,6 @@ fn start_metrics_server(addr: String) {
     });
 }
 
-
 fn load(
     interface: &str,
     running: Arc<AtomicBool>,
@@ -268,52 +284,63 @@ fn load(
     }
 
     let player_connection_map = {
-        let map = ebpf.take_map("player_connection_map").ok_or_else(|| anyhow::anyhow!("Can't take map 'player_connection_map'"))?;
+        let map = ebpf
+            .take_map("player_connection_map")
+            .ok_or_else(|| anyhow::anyhow!("Can't take map 'player_connection_map'"))?;
         #[cfg(ip_and_port_per_cpu)]
         {
             info!("Using PerCpuHashMap for player_connection_map");
-            PerCpuHashMap::<MapData, Ipv4FlowKey, u64>::try_from(map).context("try to get player_connection_map PerCpuHashMap")?
+            PerCpuHashMap::<MapData, Ipv4FlowKey, u64>::try_from(map)
+                .context("try to get player_connection_map PerCpuHashMap")?
         }
         #[cfg(not(ip_and_port_per_cpu))]
         {
-
             info!("Using HashMap for player_connection_map");
-            HashMap::<MapData, Ipv4FlowKey, u64>::try_from(map).context("try to get player_connection_map HashMap")?
+            HashMap::<MapData, Ipv4FlowKey, u64>::try_from(map)
+                .context("try to get player_connection_map HashMap")?
         }
     };
-    let player_connection_map_ref =Arc::new(Mutex::new(player_connection_map));
+    let player_connection_map_ref = Arc::new(Mutex::new(player_connection_map));
 
     let connection_throttle = {
-        let map = ebpf.take_map("connection_throttle").ok_or_else(|| anyhow::anyhow!("Can't take map 'connection_throttle'"))?;
+        let map = ebpf
+            .take_map("connection_throttle")
+            .ok_or_else(|| anyhow::anyhow!("Can't take map 'connection_throttle'"))?;
 
         #[cfg(ip_per_cpu)]
         {
             info!("Using PerCpuHashMap for connection_throttle");
-            PerCpuHashMap::<MapData, u32, u32>::try_from(map).context("try to get connection_throttle PerCpuHashMap")?
+            PerCpuHashMap::<MapData, Ipv4AddrImpl, u32>::try_from(map)
+                .context("try to get connection_throttle PerCpuHashMap")?
         }
         #[cfg(not(ip_per_cpu))]
         {
             info!("Using HashMap for connection_throttle");
-            HashMap::<MapData, u32, u32>::try_from(map).context("try to get connection_throttle HashMap")?
+            HashMap::<MapData, Ipv4AddrImpl, u32>::try_from(map)
+                .context("try to get connection_throttle HashMap")?
         }
     };
     let connection_throttle_ref = Arc::new(Mutex::new(connection_throttle));
 
     let blocked_ips = {
-        let map = ebpf.take_map("blocked_ips").ok_or_else(|| anyhow::anyhow!("Can't take map 'blocked_ips'"))?;
+        let map = ebpf
+            .take_map("blocked_ips")
+            .ok_or_else(|| anyhow::anyhow!("Can't take map 'blocked_ips'"))?;
         #[cfg(ip_per_cpu)]
         {
             info!("Using PerCpuHashMap for blocked_ips");
-            PerCpuHashMap::<MapData, u32, u64>::try_from(map).context("try to get blocked_ips PerCpuHashMap")?
+            PerCpuHashMap::<MapData, Ipv4AddrImpl, u64>::try_from(map)
+                .context("try to get blocked_ips PerCpuHashMap")?
         }
         #[cfg(not(ip_per_cpu))]
         {
             info!("Using HashMap for blocked_ips");
-            HashMap::<MapData, u32, u64>::try_from(map).context("try to get blocked_ips HashMap")?
+            HashMap::<MapData, Ipv4AddrImpl, u64>::try_from(map)
+                .context("try to get blocked_ips HashMap")?
         }
     };
     let blocked_ips_ref = Arc::new(Mutex::new(blocked_ips));
-    
+
     #[cfg(prometheus_metrics)]
     let stats = {
         let map = ebpf
@@ -337,10 +364,20 @@ fn load(
         condvar.clone(),
         connection_throttle_ref,
     )?;
-    let handle3 = spawn_block_clear("clear-blocks", running.clone(), condvar.clone(), blocked_ips_ref)?;
+    let handle3 = spawn_block_clear(
+        "clear-blocks",
+        running.clone(),
+        condvar.clone(),
+        blocked_ips_ref,
+    )?;
 
     #[cfg(prometheus_metrics)]
-    let handle4 = spawn_stats_thread("track-stats", running.clone(), condvar.clone(), stats_ref.clone())?;
+    let handle4 = spawn_stats_thread(
+        "track-stats",
+        running.clone(),
+        condvar.clone(),
+        stats_ref.clone(),
+    )?;
 
     let _ = handle1
         .join()
@@ -414,7 +451,7 @@ fn track_stats(
             total.drop_connection,
             total.ip_blocks
         );
-      
+
         // Reset stats
         let zeros = vec![Statistics::default(); values.len()];
         let new_values = PerCpuValues::try_from(zeros)?;
@@ -443,13 +480,15 @@ fn track_stats(
     Ok(())
 }
 
-fn spawn_connection_throttle_clear<M,V>(
+fn spawn_connection_throttle_clear<M, V: Display>(
     name: &'static str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
     connection_throttle_ref: Arc<Mutex<M>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error> where
-    M: mapimpl::XdpMapAbstraction<u32, V> + Send + 'static {
+) -> Result<thread::JoinHandle<()>, anyhow::Error>
+where
+    M: mapimpl::XdpMapAbstraction<Ipv4AddrImpl, V> + Send + 'static,
+{
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -463,23 +502,20 @@ fn spawn_connection_throttle_clear<M,V>(
         .map_err(|e| e.into())
 }
 
-fn connection_throttle_clear<M,V>(
+fn connection_throttle_clear<M, V: Display>(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
     connection_throttle_ref: Arc<Mutex<M>>,
-) -> Result<(), anyhow::Error> where
-    M: XdpMapAbstraction<u32, V> + Send + 'static {
+) -> Result<(), anyhow::Error>
+where
+    M: XdpMapAbstraction<Ipv4AddrImpl, V> + Send + 'static,
+{
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
-        let mut map = connection_throttle_ref
+        connection_throttle_ref
             .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
-        match map.clear() {
-            Ok(_) => {},
-            Err(_) => {
-                error!("Error while clearing connection throttle map");
-            },
-        }
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
+            .clear()?;
         let guard = dummy_mutex
             .lock()
             .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
@@ -490,15 +526,15 @@ fn connection_throttle_clear<M,V>(
     Ok(())
 }
 
-
-
 fn spawn_old_connection_clear<M>(
     name: &'static str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
     player_connection_map_ref: Arc<Mutex<M>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error> where
-    M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static {
+) -> Result<thread::JoinHandle<()>, anyhow::Error>
+where
+    M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static,
+{
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -516,30 +552,19 @@ fn clear_old_connections<M>(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
     player_connection_map_ref: Arc<Mutex<M>>,
-) -> Result<(), anyhow::Error> where
-    M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static {
+) -> Result<(), anyhow::Error>
+where
+    M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static,
+{
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
         let now = uptime_nanos()?;
-        debug!("Checking for old connections... {:?}", now);
-        let mut amount = 0;
-
-        let mut map = player_connection_map_ref.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
-        let value = map.remove_if(|_, last_update| {
-            if *last_update == 0 {
-                return false;
-            }
-            let value = (*last_update) + (OLD_CONNECTION_TIMEOUT * SECOND_TO_NANOS) < now;
-            if value {
-                amount += 1;
-            }
-            value
-        });
-        if let Err(e) = value {
-            error!("Error while removing old connections: {:?}", e);
-        } else {
-            debug!("Removed {} entries ... {:?}", amount, now);
-        }
+        player_connection_map_ref
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
+            .remove_if(|last_update| {
+                (*last_update) + (OLD_CONNECTION_TIMEOUT * SECOND_TO_NANOS) < now
+            })?;
         let guard = dummy_mutex
             .lock()
             .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
@@ -555,8 +580,10 @@ fn spawn_block_clear<M>(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
     blocked_ips_ref: Arc<Mutex<M>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error> where
-    M: XdpMapAbstraction<u32, u64> + Send + 'static {
+) -> Result<thread::JoinHandle<()>, anyhow::Error>
+where
+    M: XdpMapAbstraction<Ipv4AddrImpl, u64> + Send + 'static,
+{
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -572,21 +599,23 @@ fn block_clear<M>(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
     blocked_ips_ref: Arc<Mutex<M>>,
-) -> Result<(), anyhow::Error> where
-    M: XdpMapAbstraction<u32, u64> + Send + 'static {
+) -> Result<(), anyhow::Error>
+where
+    M: XdpMapAbstraction<Ipv4AddrImpl, u64> + Send + 'static,
+{
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
         let now = uptime_nanos()?;
-        blocked_ips_ref.lock()
+        blocked_ips_ref
+            .lock()
             .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
-            .remove_if(|_, block_time| {
-                if *block_time == 0 {
-                    return false;
-                }
-                (BLOCKED_IP_TIMEOUT * SECOND_TO_NANOS) + (*block_time) < now
-            })?;
-        let guard = dummy_mutex.lock().map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
-        let _ = condvar.wait_timeout(guard, Duration::from_secs(BLOCKED_IP_TIMEOUT)).map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
+            .remove_if(|block_time| (BLOCKED_IP_TIMEOUT * SECOND_TO_NANOS) + (*block_time) < now)?;
+        let guard = dummy_mutex
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
+        let _ = condvar
+            .wait_timeout(guard, Duration::from_secs(BLOCKED_IP_TIMEOUT))
+            .map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
     }
     Ok(())
 }

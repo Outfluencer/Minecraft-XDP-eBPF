@@ -3,7 +3,22 @@ use std::hash::Hash;
 
 /// Equivalent to `struct ipv4_flow_key`
 #[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Ipv4AddrImpl {
+    pub data: u32,
+}
+unsafe impl Pod for Ipv4AddrImpl {}
+const _: () = assert!(std::mem::size_of::<Ipv4AddrImpl>() == 4);
+
+impl std::fmt::Display for Ipv4AddrImpl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]", network_address_to_string(self.data))
+    }
+}
+
+/// Equivalent to `struct ipv4_flow_key`
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ipv4FlowKey {
     pub src_ip: u32,
     pub dst_ip: u32,
@@ -44,12 +59,15 @@ pub fn network_port_to_normal(port: u16) -> u16 {
     port.swap_bytes()
 }
 
-pub fn flow_key_to_string(key: &Ipv4FlowKey) -> String {
-    format!(
-        "[{}:{} -> {}:{}]",
-        network_address_to_string(key.src_ip),
-        network_port_to_normal(key.src_port),
-        network_address_to_string(key.dst_ip),
-        network_port_to_normal(key.dst_port)
-    )
+impl std::fmt::Display for Ipv4FlowKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{}:{} -> {}:{}]",
+            network_address_to_string(self.src_ip),
+            network_port_to_normal(self.src_port),
+            network_address_to_string(self.dst_ip),
+            network_port_to_normal(self.dst_port)
+        )
+    }
 }

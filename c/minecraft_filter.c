@@ -375,7 +375,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_ABORTED;
     }
 
-     bpf_printk("CPU: %u SRC: %x", bpf_get_smp_processor_id(), ip->saddr);
+     //bpf_printk("CPU: %u SRC: %x", bpf_get_smp_processor_id(), ip->saddr);
 
     __u32 key = 0;
     
