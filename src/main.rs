@@ -1,5 +1,6 @@
 use anyhow::Context;
 use anyhow::Result;
+use aya::maps::RingBuf;
 use aya::{
     Ebpf, include_bytes_aligned,
     maps::{HashMap, MapData, PerCpuArray, PerCpuHashMap, PerCpuValues},
@@ -30,6 +31,38 @@ use std::{
     thread,
     time::Duration,
 };
+
+fn setup_logging(bpf: &mut aya::Ebpf) {
+    // 1. Take ownership of the map so we can move it into the thread
+    let map = bpf.take_map("debug_events").expect("Map 'debug_events' not found");
+    let mut ring_buf = RingBuf::try_from(map).unwrap();
+
+    // 2. Spawn a background thread for logging
+    thread::Builder::new()
+        .name("xdp-logger".to_string())
+        .spawn(move || {
+            loop {
+                // 3. Use 'while let' to iterate safely without double borrowing
+                while let Some(event) = ring_buf.next() {
+                    let ptr = event.as_ptr() as *const crate::common::DebugLog;
+                    let log = unsafe { *ptr };
+                    
+                    // Clean up string (remove null bytes)
+                    let message = String::from_utf8_lossy(&log.array);
+                    let clean_msg = message.trim_matches('\0');
+
+                    info!(
+                        "{}: {}",
+                        log.key,
+                        clean_msg
+                    );
+                }
+                // 4. Sleep briefly when empty to avoid 100% CPU usage
+                thread::sleep(Duration::from_millis(100));
+            }
+        })
+        .expect("Failed to spawn logging thread");
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -283,6 +316,8 @@ fn load(
     for (name, _) in ebpf.maps() {
         info!("Found map: {}", name);
     }
+
+    setup_logging(&mut ebpf);
 
     let player_connection_map = {
         let map = ebpf

@@ -83,6 +83,41 @@ struct
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } connection_throttle SEC(".maps");
 
+struct
+{
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 1024 * 64);
+} debug_events SEC(".maps");
+
+static __always_inline void submit_debug_log(struct ipv4_flow_key key, char *message, __u32 len)
+{
+    struct text_log *e = bpf_ringbuf_reserve(&debug_events, sizeof(struct text_log), 0);
+    if (!e)
+    {
+        return;
+    }
+
+    e->flow_key = key;
+
+    // The compiler unrolls this loop because 'len' comes from a constant in the macro
+    #pragma unroll
+    for (__u32 i = 0; i < 64; i++)
+    {
+        // Copy if within string bounds, otherwise pad with 0
+        if (i < len)
+        {
+            e->msg[i] = message[i];
+        }
+        else
+        {
+            e->msg[i] = 0;
+        }
+    }
+    bpf_ringbuf_submit(e, 0);
+}
+
+#define LOG_DEBUG(key, msg) submit_debug_log(key, msg, sizeof(msg))
+
 #if PROMETHEUS_METRICS
 struct
 {
@@ -349,8 +384,11 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_ABORTED;
     }
 
+
+
     // Check if TCP destination port matches mc server port
     __u16 dest_port = __builtin_bswap16(tcp->dest);
+
 
 #if START_PORT == END_PORT
     if (dest_port != START_PORT)
@@ -363,7 +401,6 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_PASS; // not for our service
     }
 #endif
-
     if (tcp->doff < 5)
     {
         return XDP_ABORTED;
@@ -371,7 +408,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
     __u32 tcp_hdr_len = tcp->doff * 4;
     if ((void *)tcp + tcp_hdr_len > data_end)
-    {
+    {    
         return XDP_ABORTED;
     }
 
@@ -392,31 +429,34 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
     __u64 raw_packet_len = (__u64)(data_end - data);
     count_stats(stats_ptr, INCOMING_BYTES, raw_packet_len);
-
+    __u32 src_ip = ip->saddr;
+    struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
     // Additional TCP bypass checks for abnormal flags
     if (detect_tcp_bypass(tcp))
     {
+        LOG_DEBUG(flow_key, "detect_tcp_bypass");
         count_stats(stats_ptr, TCP_BYPASS, 1);
         goto drop;
     }
 
-    __u32 src_ip = ip->saddr;
 
     // stateless new connection checks
     if (tcp->syn)
     {
+        LOG_DEBUG(flow_key, "sent syn");
         count_stats(stats_ptr, SYN_RECEIVE, 1);
-// drop syn's of new connections if blocked
-#if BLOCK_IPS
+        // drop syn's of new connections if blocked
+        #if BLOCK_IPS
         __u64 *blocked = bpf_map_lookup_elem(&blocked_ips, &src_ip);
         if (blocked)
         {
+            LOG_DEBUG(flow_key, "ip is blocked");
             goto drop;
         }
-#endif
+        #endif
 
-// this works perfectly for now but, experimental
-#if STATELESS
+        // this works perfectly for now but, experimental
+        #if STATELESS
         /* PARSE TCP OPTIONS*/
         __u8 *opt_ptr = (__u8 *)tcp + sizeof(struct tcphdr);
         __u32 opts_len = tcp_hdr_len - sizeof(struct tcphdr);
@@ -424,12 +464,13 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
         if (check_options(opt_ptr, opt_end, (void *)data_end) != 0)
         {
+            LOG_DEBUG(flow_key, "check_options");
             // invalid options, drop the packet
             goto drop;
         }
-#endif
+        #endif
 
-#if CONNECTION_THROTTLE
+        #if CONNECTION_THROTTLE
         // connection throttle
         // 10 connection per ip per 3 seconds, otherwise drop
         __u32 *hit_counter = bpf_map_lookup_elem(&connection_throttle, &src_ip);
@@ -437,6 +478,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             if (*hit_counter > HIT_COUNT)
             {
+                LOG_DEBUG(flow_key, "syn connection throttle");
                 goto drop;
             }
             (*hit_counter)++;
@@ -446,22 +488,22 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             __u32 new_counter = 1;
             if (bpf_map_update_elem(&connection_throttle, &src_ip, &new_counter, BPF_NOEXIST) < 0)
             {
+                LOG_DEBUG(flow_key, "syn could not add connection throttle map");
                 goto drop;
             }
         }
-#endif
+        #endif
 
-        struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
         struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, __builtin_bswap32(tcp->seq) + 1);
         if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY) < 0)
         {
+            LOG_DEBUG(flow_key, "syn could not add conntrack map");
             goto drop;
         }
 
         return XDP_PASS;
     }
 
-    struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
     // Compute flow key for TCP connection
     __u64 *lastTime = bpf_map_lookup_elem(&player_connection_map, &flow_key);
     if (lastTime)
@@ -477,6 +519,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
     if (!initial_state)
     {
+        LOG_DEBUG(flow_key, "received packet for untracked connection");
         goto drop; // no connection tracked, drop
     }
 
@@ -486,12 +529,14 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         // not an ack or invalid ack number
         if (!tcp->ack || initial_state->expected_sequence != __builtin_bswap32(tcp->seq))
         {
+            LOG_DEBUG(flow_key, "waiting for ack but no ack or invalid seq");
             goto drop;
         }
         initial_state->state = state = AWAIT_MC_HANDSHAKE;
         if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST) < 0)
         {
             // we could not update the value we need to drop.
+            LOG_DEBUG(flow_key, "could not update state to AWAIT_MC_HANDSHAKE");
             goto drop;
         }
         // do not return here, the ack of the tcp handshake can contain application data
@@ -511,6 +556,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     // tcp packet is split in multiple ethernet frames, we don't support that
     if (packet_end > tcp_payload_end)
     {
+        LOG_DEBUG(flow_key, "tcp packet split in multiple frames (block)");
         goto block_and_drop;
     }
 
@@ -519,6 +565,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
         if (!tcp->ack)
         {
+            LOG_DEBUG(flow_key, "expected ack for data packet (block)");
             goto block_and_drop;
         }
 
@@ -529,10 +576,12 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             if (++initial_state->fails > MAX_OUT_OF_ORDER)
             {
+                LOG_DEBUG(flow_key, "too many out of order packets (block)");
                 goto block_and_drop;
             }
             // if it does not exist the connection was closed by another thread
             bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST);
+            LOG_DEBUG(flow_key, "out of order packet");
             goto drop;
         }
 
@@ -543,12 +592,14 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             // even with retransmition this len should always be valid‚
             if (!next_state)
             {
+                LOG_DEBUG(flow_key, "invalid mc handshake (block)");
                 goto block_and_drop;
             }
 
             // fully drop legacy ping
             if (next_state == RECEIVED_LEGACY_PING)
             {
+                LOG_DEBUG(flow_key, "legacy ping");
                 drop_legacy_connection(stats_ptr, &flow_key);
                 goto drop;
             }
@@ -568,6 +619,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             if (!inspect_status_request(tcp_payload, tcp_payload_end, packet_end))
             {
+                LOG_DEBUG(flow_key, "invalid status request (block)");
                 goto block_and_drop;
             }
             initial_state->state = AWAIT_PING;
@@ -578,6 +630,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             if (!inspect_ping_request(tcp_payload, tcp_payload_end, packet_end))
             {
+                LOG_DEBUG(flow_key, "invalid ping request (block)");
                 goto block_and_drop;
             }
             initial_state->state = PING_COMPLETE;
@@ -588,6 +641,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             if (!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol, packet_end))
             {
+                LOG_DEBUG(flow_key, "invalid login packet (block)");
                 goto block_and_drop;
             }
             // as tracking ends here we do not need to update the sequence
@@ -596,6 +650,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         else if (state == PING_COMPLETE)
         {
+            LOG_DEBUG(flow_key, "extra packet after ping complete (block)");
             goto block_and_drop;
         }
     }
@@ -614,5 +669,4 @@ switch_to_verified:
     return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }
 
-char _license[] SEC("license") = "Proprietary";
-// bpf_printk("no payload seq %lu, ack %lu", __builtin_bswap32(tcp->seq), __builtin_bswap32(tcp->ack_seq));
+char _license[] SEC("license") = "GPL";
