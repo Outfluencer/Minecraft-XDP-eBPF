@@ -378,7 +378,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
      //bpf_printk("CPU: %u SRC: %x", bpf_get_smp_processor_id(), ip->saddr);
 
     __u32 key = 0;
-    
+
     #if PROMETHEUS_METRICS
     struct statistics *stats_ptr = bpf_map_lookup_elem(&stats_map, &key);
     if (!stats_ptr)
@@ -614,5 +614,5 @@ switch_to_verified:
     return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }
 
-char _license[] SEC("license") = "GPL";
+char _license[] SEC("license") = "Proprietary";
 // bpf_printk("no payload seq %lu, ack %lu", __builtin_bswap32(tcp->seq), __builtin_bswap32(tcp->ack_seq));

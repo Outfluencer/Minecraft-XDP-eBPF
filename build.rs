@@ -69,5 +69,7 @@ fn main() {
     // 3. Re-run if relevant files change
     println!("cargo:rerun-if-changed=c/minecraft_filter.c");
     println!("cargo:rerun-if-changed=c/common.h");
+    println!("cargo:rerun-if-changed=c/minecraft_networking.c");
+    println!("cargo:rerun-if-changed=c/stats.h");
     println!("cargo:rerun-if-changed=build.rs");
 }

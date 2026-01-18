@@ -1,4 +1,3 @@
-use anyhow::Ok;
 use aya::{
     Pod,
     maps::{HashMap, MapData, PerCpuHashMap},
@@ -102,6 +101,7 @@ impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V>
                 }
             }
         }
+        keys_to_remove.sort_unstable();
         keys_to_remove.dedup();
         for ele in keys_to_remove {
             self.remove(&ele)?;

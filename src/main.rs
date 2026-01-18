@@ -16,6 +16,7 @@ use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::Ap
 use lazy_static::lazy_static;
 use libc::{CLOCK_MONOTONIC, clock_gettime, timespec};
 use log::{debug, error, info};
+#[cfg(prometheus_metrics)]
 use prometheus::{IntCounter, register_int_counter};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Signals;
@@ -271,7 +272,7 @@ fn load(
         .program_mut("minecraft_filter")
         .ok_or_else(|| anyhow::anyhow!("Program 'minecraft_filter' not found"))?
         .try_into()?;
-    programm.load().unwrap();
+    programm.load()?;
 
     let result = programm.attach(interface, XdpFlags::empty())?;
     info!(
