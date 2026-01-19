@@ -13,7 +13,7 @@ prometheus = "0.14"
 lazy_static = "1.4"
 tiny_http = "0.12"
 fern = { version = "0.7", features = ["colored"] }
-colored = "3.0"
+colored = "3.1"
 chrono = "0.4"
 file-rotate = "0.8"
 clap = { version = "4.5", features = ["derive"] }
