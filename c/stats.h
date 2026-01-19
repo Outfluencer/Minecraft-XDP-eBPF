@@ -1,3 +1,6 @@
+#ifndef STATS_H
+#define STATS_H
+
 #include <linux/types.h>
 
 // bitmask for statistics types
@@ -25,3 +28,5 @@ struct statistics
 };
 
 _Static_assert(sizeof(struct statistics) == 72, "statistics size mismatch!");
+
+#endif

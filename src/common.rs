@@ -1,8 +1,36 @@
 use aya::Pod;
+use std::hash::Hash;
+
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Ipv4AddrImpl {
+    pub data: u32,
+}
+unsafe impl Pod for Ipv4AddrImpl {}
+const _: () = assert!(std::mem::size_of::<Ipv4AddrImpl>() == 4);
+
+impl std::fmt::Display for Ipv4AddrImpl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]", network_address_to_string(self.data))
+    }
+}
+
+// NEW: Event Log Structure
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct DebugLog {
+    pub key: Ipv4FlowKey,
+    pub cpu: u32,
+    pub array: [u8; 64], // 1 = blocked, 2 = invalid len, etc.
+}
+
+const _: () = assert!(std::mem::size_of::<DebugLog>() == 80);
+
+unsafe impl Pod for DebugLog {}
 
 /// Equivalent to `struct ipv4_flow_key`
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Ipv4FlowKey {
     pub src_ip: u32,
     pub dst_ip: u32,
@@ -17,7 +45,7 @@ const _: () = assert!(std::mem::size_of::<Ipv4FlowKey>() == 12);
 
 /// Equivalent to `struct statistics`
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Statistics {
     pub ip_blocks: u64,
     pub verified: u64,
@@ -43,12 +71,15 @@ pub fn network_port_to_normal(port: u16) -> u16 {
     port.swap_bytes()
 }
 
-pub fn flow_key_to_string(key: &Ipv4FlowKey) -> String {
-    format!(
-        "[{}:{} -> {}:{}]",
-        network_address_to_string(key.src_ip),
-        network_port_to_normal(key.src_port),
-        network_address_to_string(key.dst_ip),
-        network_port_to_normal(key.dst_port)
-    )
+impl std::fmt::Display for Ipv4FlowKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{}:{} -> {}:{}]",
+            network_address_to_string(self.src_ip),
+            network_port_to_normal(self.src_port),
+            network_address_to_string(self.dst_ip),
+            network_port_to_normal(self.dst_port)
+        )
+    }
 }
