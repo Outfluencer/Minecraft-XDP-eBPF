@@ -32,6 +32,7 @@ use std::{
     time::Duration,
 };
 
+/* 
 fn setup_logging(bpf: &mut aya::Ebpf) {
     // 1. Take ownership of the map so we can move it into the thread
     let map = bpf.take_map("debug_events").expect("Map 'debug_events' not found");
@@ -63,7 +64,7 @@ fn setup_logging(bpf: &mut aya::Ebpf) {
             }
         })
         .expect("Failed to spawn logging thread");
-}
+}*/
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -315,7 +316,7 @@ fn load(
         info!("Found map: {}", name);
     }
 
-    setup_logging(&mut ebpf);
+    //setup_logging(&mut ebpf);
 
     let player_connection_map = {
         let map = ebpf

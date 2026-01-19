@@ -106,40 +106,4 @@ static __always_inline struct initial_state gen_initial_state(__u16 state, __s32
     };
     return new_state;
 }
-
-struct
-{
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 1024 * 64);
-} debug_events SEC(".maps");
-
-static __always_inline void submit_debug_log(struct ipv4_flow_key key, char *message, __u32 len)
-{
-    struct text_log *e = bpf_ringbuf_reserve(&debug_events, sizeof(struct text_log), 0);
-    if (!e)
-    {
-        return;
-    }
-
-    e->flow_key = key;
-    e->cpu = bpf_get_smp_processor_id();
-    // The compiler unrolls this loop because 'len' comes from a constant in the macro
-    #pragma unroll
-    for (__u32 i = 0; i < 64; i++)
-    {
-        // Copy if within string bounds, otherwise pad with 0
-        if (i < len)
-        {
-            e->msg[i] = message[i];
-        }
-        else
-        {
-            e->msg[i] = 0;
-        }
-    }
-    bpf_ringbuf_submit(e, 0);
-}
-
-#define LOG_DEBUG(key, msg) submit_debug_log(key, msg, sizeof(msg))
-
 #endif
