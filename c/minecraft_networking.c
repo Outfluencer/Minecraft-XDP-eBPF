@@ -1,4 +1,5 @@
 #include <linux/types.h>
+#include "common.h"
 
 // if you are running a premium server, you can enable this, it drops weird usernames
 #ifndef ONLY_ASCII_NAMES
@@ -191,7 +192,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *f
 
     // check for legacy ping
     if (reader_index[0] == (__u8)0xFE)
-    {
+    { 
         return RECEIVED_LEGACY_PING;
     }
 

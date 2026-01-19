@@ -1,3 +1,6 @@
+#ifndef COMMON_H
+#define COMMON_H
+
 #include <linux/types.h>
 
 // maximum amount of retransmission packets before blocking
@@ -134,3 +137,5 @@ static __always_inline void submit_debug_log(struct ipv4_flow_key key, char *mes
 }
 
 #define LOG_DEBUG(key, msg) submit_debug_log(key, msg, sizeof(msg))
+
+#endif
