@@ -5,7 +5,6 @@ fn main() {
     // You can modify these values here, and they will apply to both Rust and C code.
     let config = [
         ("ONLY_ASCII_NAMES", "1"),
-        ("BLOCK_IPS", "1"),
         ("CONNECTION_THROTTLE", "1"),
         ("START_PORT", "25533"),
         ("END_PORT", "25533"),

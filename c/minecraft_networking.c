@@ -93,39 +93,14 @@ __attribute__((noinline)) static __u8 inspect_ping_request(__u8 *start, __u8 *pa
 // checks if the packet contains a valid status request
 __attribute__((noinline)) static __u8 inspect_status_request(__u8 *start, __u8 *payload_end, void *data_end)
 {
-
-    #pragma unroll
-    for(__u8 i = 0; i < 10; i++) {
-        if ((void*)(start + i + 1) > data_end) {
-            break;
-        }
-        __u8 value = start[i];
-        struct ipv4_flow_key dump = {value, 0,0,0};
-        LOG_DEBUG(dump, "status request byte");
-    }
-
-    // 1 and 6
-    //__s32 len = payload_end - start;
-
     register struct varint_value varint;
     // len
     READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
-    struct ipv4_flow_key dump = {varint.value, 0,0,0};
-    LOG_DEBUG(dump, "status request bytea");
     ASSERT_OR_RETURN(varint.value == 0x01);
-    
-    LOG_DEBUG(dump, "AFTER ASSERT_OR_RETURN(varint.value == 0x01);");
     // packet id
     READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
-    struct ipv4_flow_key dump2 = {varint.value, 0,0,0};
-    LOG_DEBUG(dump2, "status request byteab");
     ASSERT_OR_RETURN(varint.value == 0x00);
-
-    __u8 v = start == payload_end;
-    struct ipv4_flow_key dump3 = {v, 0,0,0};
-    LOG_DEBUG(dump3, "status request byteac");
-
-    return v;
+    return start == payload_end;
 }
 
 // checks if the packet contains a valid login request
@@ -206,7 +181,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-__attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *flow_key, __u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
+__attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
 {
 
     if(OUT_OF_BOUNDS(reader_index, 1, payload_end, data_end))
@@ -251,23 +226,14 @@ __attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *f
     // valid intentions: 1 (status), 2 (login), 3 (login with transfer request) since 766
     ASSERT_OR_RETURN((intention == 1 || intention == 2 || (support_transfer && intention == 3)));
 
-    struct ipv4_flow_key flow_key_copy = (*flow_key);
-
     // this packet contained exactly the handshake
     if (reader_index == payload_end)
     {
-        if(intention == 1) {
-            LOG_DEBUG(flow_key_copy, "handshake with status request");
-        } else {
-            LOG_DEBUG(flow_key_copy, "handshake with login request");
-        }
-
         return intention == 1 ? AWAIT_STATUS_REQUEST : AWAIT_LOGIN;
     }
 
     if (intention == 1)
     {
-        LOG_DEBUG(flow_key_copy, "handshake with status request b");
         // the packet also contained the staus request
         if (inspect_status_request(reader_index, payload_end, data_end))
         {
@@ -276,7 +242,6 @@ __attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *f
     }
     else
     {
-        LOG_DEBUG(flow_key_copy, "handshake with login request b");
         if (inspect_login_packet(reader_index, payload_end, *protocol_version, data_end))
         {
             // we received login here we have to disable the filter
