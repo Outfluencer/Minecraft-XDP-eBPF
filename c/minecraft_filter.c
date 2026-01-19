@@ -235,13 +235,13 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 #endif
     if (tcp->doff < 5)
     {
-        return XDP_ABORTED;
+        return XDP_DROP;
     }
 
     __u32 tcp_hdr_len = tcp->doff * 4;
     if ((void *)tcp + tcp_hdr_len > data_end)
     {
-        return XDP_ABORTED;
+        return XDP_DROP;
     }
 
     // bpf_printk("CPU: %u SRC: %x", bpf_get_smp_processor_id(), ip->saddr);
@@ -252,7 +252,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     if (!stats_ptr)
     {
         // this should be impossible
-        return XDP_ABORTED;
+        return XDP_DROP;
     }
 #else
     struct statistics *stats_ptr = 0;
