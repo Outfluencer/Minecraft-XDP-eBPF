@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 
-/* 
+/*
 fn setup_logging(bpf: &mut aya::Ebpf) {
     // 1. Take ownership of the map so we can move it into the thread
     let map = bpf.take_map("debug_events").expect("Map 'debug_events' not found");
@@ -47,7 +47,7 @@ fn setup_logging(bpf: &mut aya::Ebpf) {
                 while let Some(event) = ring_buf.next() {
                     let ptr = event.as_ptr() as *const crate::common::DebugLog;
                     let log = unsafe { *ptr };
-                    
+
                     // Clean up string (remove null bytes)
                     let message = String::from_utf8_lossy(&log.array);
                     let clean_msg = message.trim_matches('\0');

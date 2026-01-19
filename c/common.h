@@ -18,7 +18,6 @@
 
 #define SECOND_TO_NANOS 1000000000ULL
 
-
 // Returns TRUE if the access would be out of bounds (UNSAFE)
 // Casts everything to (void *) to prevent "distinct pointer type" warnings
 #define OUT_OF_BOUNDS(ptr, n, pend, dend) \
@@ -26,39 +25,49 @@
 
 // Checks bounds. If bad, returns 0. If good, increments ptr.
 // usage: READ_OR_RETURN(reader_index, 2, payload_end, data_end);
-#define READ_OR_RETURN(ptr, n, pend, dend) \
-do { \
-    if (OUT_OF_BOUNDS(ptr, n, pend, dend)) return 0; \
-    ptr += (n); \
-} while(0)
+#define READ_OR_RETURN(ptr, n, pend, dend)     \
+    do                                         \
+    {                                          \
+        if (OUT_OF_BOUNDS(ptr, n, pend, dend)) \
+            return 0;                          \
+        ptr += (n);                            \
+    } while (0)
 
 // Reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
-#define READ_VAL_OR_RETURN(dest, ptr, pend, dend) \
-do { \
-    if (OUT_OF_BOUNDS(ptr, sizeof(dest), pend, dend)) return 0; \
-    dest = *(__typeof__(dest) *)(ptr); \
-    ptr += sizeof(dest); \
-} while(0)
+#define READ_VAL_OR_RETURN(dest, ptr, pend, dend)         \
+    do                                                    \
+    {                                                     \
+        if (OUT_OF_BOUNDS(ptr, sizeof(dest), pend, dend)) \
+            return 0;                                     \
+        dest = *(__typeof__(dest) *)(ptr);                \
+        ptr += sizeof(dest);                              \
+    } while (0)
 
 // If condition is false, returns 0 immediately.
 #define ASSERT_OR_RETURN(cond) \
-do { \
-    if (!(cond)) return 0; \
-} while(0)
+    do                         \
+    {                          \
+        if (!(cond))           \
+            return 0;          \
+    } while (0)
 
-#define ASSERT_IN_RANGE(val, min, max) \
-do { \
-    if ((val) < (min) || (val) > (max)) return 0; \
-} while(0)
+#define ASSERT_IN_RANGE(val, min, max)      \
+    do                                      \
+    {                                       \
+        if ((val) < (min) || (val) > (max)) \
+            return 0;                       \
+    } while (0)
 // Reads a VarInt into 'dest_struct', increments 'ptr', or returns 0 on failure.
 // dest_struct: variables of type 'struct varint_value'
 // max_bytes: usually 5 for Int, or 1-2 for lengths
 #define READ_VARINT_OR_RETURN(dest_struct, ptr, max_bytes, pend, dend) \
-do { \
-dest_struct = read_varint_sized(ptr, pend, max_bytes, dend); \
-if (!(dest_struct).bytes) return 0; \
-(ptr) += (dest_struct).bytes; \
-} while(0)
+    do                                                                 \
+    {                                                                  \
+        dest_struct = read_varint_sized(ptr, pend, max_bytes, dend);   \
+        if (!(dest_struct).bytes)                                      \
+            return 0;                                                  \
+        (ptr) += (dest_struct).bytes;                                  \
+    } while (0)
 
 struct ipv4_flow_key
 {
@@ -69,7 +78,8 @@ struct ipv4_flow_key
 };
 _Static_assert(sizeof(struct ipv4_flow_key) == 12, "ipv4_flow_key size mismatch!");
 
-struct text_log {
+struct text_log
+{
     struct ipv4_flow_key flow_key;
     __u32 cpu;
     char msg[64];

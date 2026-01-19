@@ -34,7 +34,7 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload
 
     register __u8 b = *start++;
     register __s32 result = (b & 0x7F);
-    if (!(b & 0x80))    
+    if (!(b & 0x80))
         return varint(result, 1);
 
     // Byte 2
@@ -68,8 +68,8 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload
     result |= ((b & 0x7F) << 28);
     if (!(b & 0x80))
         return varint(result, 5);
-    error:
-        return varint(0, 0);
+error:
+    return varint(0, 0);
 }
 
 // checks if the packet contains a valid ping request
@@ -117,14 +117,12 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
     // packet id
     READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
 
-
     // username length
     READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
     // bounce check, invalid username
     ASSERT_IN_RANGE(varint.value, 1, 16 * (ONLY_ASCII_NAMES ? 1 : 3));
     // skip the username data
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
-
 
     // 1_19                                          1_19_3
     if (protocol_version >= 759 && protocol_version < 761)
@@ -150,7 +148,6 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
             // skip signature
             READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
         }
-        
     }
     //  1_19_1
     if (protocol_version >= 760)
@@ -184,14 +181,14 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
 __attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
 {
 
-    if(OUT_OF_BOUNDS(reader_index, 1, payload_end, data_end))
+    if (OUT_OF_BOUNDS(reader_index, 1, payload_end, data_end))
     {
         return 0;
     }
 
     // check for legacy ping
     if (reader_index[0] == (__u8)0xFE)
-    { 
+    {
         return RECEIVED_LEGACY_PING;
     }
 
