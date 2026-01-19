@@ -3,10 +3,10 @@
 #endif
 
 #ifndef START_PORT
-#define START_PORT 25000
+#define START_PORT 25565
 #endif
 #ifndef END_PORT
-#define END_PORT 26000
+#define END_PORT 25565
 #endif
 
 #include <stddef.h>
