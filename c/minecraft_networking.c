@@ -26,19 +26,19 @@ static __always_inline struct varint_value varint(int value, unsigned int bytes)
 
 _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
 
-__always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *end, __u8 max_size)
+__always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload_end, __u8 max_size, __u8 *data_end)
 {
     // Byte 1
-    if (max_size < 1 || start >= end)
+    if (max_size < 1 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
 
     register __u8 b = *start++;
     register __s32 result = (b & 0x7F);
-    if (!(b & 0x80))
+    if (!(b & 0x80))    
         return varint(result, 1);
 
     // Byte 2
-    if (max_size < 2 || start >= end)
+    if (max_size < 2 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
     b = *start++;
     result |= ((b & 0x7F) << 7);
@@ -46,7 +46,7 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *end, __
         return varint(result, 2);
 
     // Byte 3
-    if (max_size < 3 || start >= end)
+    if (max_size < 3 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
     b = *start++;
     result |= ((b & 0x7F) << 14);
@@ -54,7 +54,7 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *end, __
         return varint(result, 3);
 
     // Byte 4
-    if (max_size < 4 || start >= end)
+    if (max_size < 4 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
     b = *start++;
     result |= ((b & 0x7F) << 21);
@@ -62,7 +62,7 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *end, __
         return varint(result, 4);
 
     // Byte 5
-    if (max_size < 5 || start >= end)
+    if (max_size < 5 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
     b = *start;
     result |= ((b & 0x7F) << 28);
@@ -73,148 +73,84 @@ error:
 }
 
 // checks if the packet contains a valid ping request
-static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *end, __u8 *packet_end)
+static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *payload_end, __u8 *data_end)
 {
-    // we could check if the timestamp is negative here
-    return start + 2 <= end && packet_end - start == PING_REQUEST_LEN && start[0] == 9 && start[1] == 1;
+    __u8 packet_length;
+    READ_VAL_OR_RETURN(packet_length, start, payload_end, data_end);
+    ASSERT_OR_RETURN(packet_length == 0x09);
+
+    __u8 packet_id;
+    READ_VAL_OR_RETURN(packet_id, start, payload_end, data_end);
+    ASSERT_OR_RETURN(packet_id == 0x01);
+
+    __u64 timestamp;
+    READ_VAL_OR_RETURN(timestamp, start, payload_end, data_end);
+    return start == payload_end;
 }
 
 // checks if the packet contains a valid status request
-static __always_inline __u8 inspect_status_request(__u8 *start, __u8 *end, __u8 *packet_end)
+static __always_inline __u8 inspect_status_request(__u8 *start, __u8 *payload_end, __u8 *data_end)
 {
-    return start + 2 <= end && packet_end - start == STATUS_REQUEST_LEN && start[0] == 1 && start[1] == 0;
+    __u8 packet_length;
+    READ_VAL_OR_RETURN(packet_length, start, payload_end, data_end);
+    ASSERT_OR_RETURN(packet_length == 0x01);
+
+    __u8 packet_id;
+    READ_VAL_OR_RETURN(packet_id, start, payload_end, data_end);
+    ASSERT_OR_RETURN(packet_id == 0x00);
+
+
+    return start == payload_end;
 }
 
 // checks if the packet contains a valid login request
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
-__attribute__((noinline)) static __u8 inspect_login_packet(__u8 *start, __u8 *end, __s32 protocol_version, __u8 *packet_end)
+__attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, __u8 *payload_end, __s32 protocol_version, __u8 *data_end)
 {
-    __s64 size = packet_end - start;
-    if (size > MAX_LOGIN_LEN || size < MIN_LOGIN_LEN)
-        return 0;
-
-    __u8 *reader_index = start;
-
     // length of the packet
-    register struct varint_value varint = read_varint_sized(reader_index, end, 2);
-    if (!varint.bytes || varint.value > MAX_LOGIN_LEN)
-    {
-        return 0;
-    };
-    reader_index += varint.bytes;
+    register struct varint_value varint;
+
+    // packet length
+    READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
+    ASSERT_OR_RETURN(varint.value <= MAX_LOGIN_LEN);
 
     // packet id
-    varint = read_varint_sized(reader_index, end, 1);
-    if (!varint.bytes || varint.value != 0x00)
-    {
-        return 0;
-    };
-    reader_index += varint.bytes;
+    READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
+
 
     // username length
-    varint = read_varint_sized(reader_index, end, 2);
-    if (!varint.bytes)
-    {
-        return 0;
-    };
-
-    if (reader_index + varint.bytes > end)
-    {
-        return 0;
-    }
-
+    READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
     // bounce check, invalid username
-    if (varint.value < 1 || varint.value > 16 * (ONLY_ASCII_NAMES ? 1 : 3))
-    {
-        return 0;
-    }
+    ASSERT_OR_RETURN(varint.value <= 16 * (ONLY_ASCII_NAMES ? 1 : 3));
+    // skip the username data
+    READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
 
-    __u32 username_len = (__u32)varint.value;
 
-    reader_index += varint.bytes;
-    if (reader_index + username_len > end)
-    {
-        return 0;
-    }
-    reader_index += username_len;
     // 1_19                                          1_19_3
     if (protocol_version >= 759 && protocol_version < 761)
     {
-        if (reader_index + 1 <= end)
+        __u8 has_public_key;
+        READ_VAL_OR_RETURN(has_public_key, reader_index, payload_end, data_end);
+        if (has_public_key)
         {
-            __u8 has_public_key = reader_index[0];
-            reader_index++;
-            if (has_public_key)
-            {
-                if (reader_index + 8 > end)
-                {
-                    return 0;
-                }
-                reader_index += 8; // skip expiry time
+            // public key length
+            READ_OR_RETURN(reader_index, 8, payload_end, data_end);
 
-                // login key
-                varint = read_varint_sized(reader_index, end, 2);
+            // login key
+            READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
+            // assert reasonable size
+            ASSERT_OR_RETURN((varint.value >= 0 && varint.value <= 512));
+            // skip login key
+            READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
 
-                if (!varint.bytes)
-                {
-                    return 0;
-                };
-
-                if (varint.value < 0)
-                {
-                    return 0;
-                }
-                __u32 key_lenu = (__u32)varint.value;
-
-                if (key_lenu > 512)
-                {
-                    return 0;
-                }
-
-                if (reader_index + varint.bytes > end)
-                {
-                    return 0;
-                }
-
-                reader_index += varint.bytes;
-
-                if (reader_index + key_lenu > end)
-                {
-                    return 0;
-                }
-                reader_index += key_lenu;
-                // signaturey length
-                varint = read_varint_sized(reader_index, end, 2);
-
-                if (!varint.bytes)
-                {
-                    return 0;
-                }
-                if (varint.value < 0)
-                {
-                    return 0;
-                }
-                __u32 signaturey_lenu = (__u32)varint.value;
-                if (signaturey_lenu > 4096)
-                {
-                    return 0;
-                }
-                if (reader_index + varint.bytes > end)
-                {
-                    return 0;
-                }
-                reader_index += varint.bytes;
-                if (reader_index + signaturey_lenu > end)
-                {
-                    return 0;
-                }
-                reader_index += signaturey_lenu;
-            }
+            // signaturey length
+            READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
+            // assert reasonable size
+            ASSERT_OR_RETURN((varint.value >= 0 && varint.value <= 4096));
+            // skip signature
+            READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
         }
-        else
-        {
-            return 0;
-        }
+        
     }
     //  1_19_1
     if (protocol_version >= 760)
@@ -223,33 +159,21 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *start, __u8 *en
         if (protocol_version >= 764)
         {
             // check space for uuid
-            if (reader_index + 16 > end)
-            {
-                return 0;
-            }
-            reader_index += 16;
+            READ_OR_RETURN(reader_index, 16, payload_end, data_end);
         }
         else
         {
             // check space for uuid and boolean
-            if (reader_index + 1 > end)
-            {
-                return 0;
-            }
-            __u8 has_uuid = reader_index[0];
-            reader_index++;
+            __u8 has_uuid;
+            READ_VAL_OR_RETURN(has_uuid, reader_index, payload_end, data_end);
             if (has_uuid)
             {
-                if (reader_index + 16 > end)
-                {
-                    return 0;
-                }
-                reader_index += 16;
+                READ_OR_RETURN(reader_index, 16, payload_end, data_end);
             }
         }
     }
     // no data left to read, this is a valid login packet
-    return reader_index == packet_end;
+    return reader_index == payload_end;
 }
 
 // Check for valid handshake packet
@@ -257,113 +181,78 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *start, __u8 *en
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-__attribute__((noinline)) static __s32 inspect_handshake(__u8 *start, __u8 *end, __s32 *protocol_version, __u8 *packet_end)
+__attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *flow_key, __u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, __u8 *data_end)
 {
 
-    if (start + 1 <= end)
-    {
-        if (start[0] == (__u8)0xFE)
-        {
-            return RECEIVED_LEGACY_PING;
-        }
-    }
-
-    __s64 size = packet_end - start;
-    if (size > MAX_HANDSHAKE_LEN + MAX_LOGIN_LEN || size < MIN_HANDSHAKE_LEN)
+    if(OUT_OF_BOUNDS(reader_index, 1, payload_end, data_end))
     {
         return 0;
     }
 
-    __u8 *reader_index = start;
+    // check for legacy ping
+    if (reader_index[0] == (__u8)0xFE)
+    {
+        return RECEIVED_LEGACY_PING;
+    }
+
     // packet length
-    register struct varint_value varint = read_varint_sized(reader_index, end, 2);
-    if (!varint.bytes || varint.value > MAX_HANDSHAKE_LEN)
-    {
-        return 0;
-    };
-    reader_index += varint.bytes;
+    register struct varint_value varint;
+    READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
+    ASSERT_OR_RETURN(varint.value <= MAX_HANDSHAKE_LEN);
 
     // packet id
-    varint = read_varint_sized(reader_index, end, 1);
-    if (!varint.bytes || varint.value != 0x00)
-    {
-        return 0;
-    };
-    reader_index += varint.bytes;
+    READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
+    ASSERT_OR_RETURN(varint.value == 0x00); // packet id needs to be 0
 
     // protocol version
-    varint = read_varint_sized(reader_index, end, 5);
-    if (!varint.bytes)
-    {
-        return 0;
-    };
+    READ_VARINT_OR_RETURN(varint, reader_index, 5, payload_end, data_end);
     *protocol_version = varint.value;
 
-    reader_index += varint.bytes;
-
     // host len
-    varint = read_varint_sized(reader_index, end, 2);
+    READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
+    ASSERT_OR_RETURN(varint.value <= 255 * 3);
 
-    if (!varint.bytes)
-    {
-        return 0;
-    };
-
-    if (varint.value > 255 * 3 || varint.value < 1)
-    {
-        return 0;
-    }
-
-    if (reader_index + varint.bytes > end)
-        return 0;
-    reader_index += varint.bytes;
-    if (reader_index + varint.value > end)
-        return 0;
-    reader_index += varint.value;
-    if (reader_index + 2 > end)
-        return 0;
-    reader_index += 2;
+    // read host
+    READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
+    // read port
+    READ_OR_RETURN(reader_index, 2, payload_end, data_end);
 
     // intention
-    varint = read_varint_sized(reader_index, end, 1);
-
-    if (!varint.bytes)
-    {
-        return 0;
-    };
+    READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
 
     __s32 intention = varint.value;
     __u8 support_transfer = *protocol_version >= 766;
 
     // valid intentions: 1 (status), 2 (login), 3 (login with transfer request) since 766
-    if (intention == 1 || intention == 2 || (support_transfer && intention == 3))
-    {
-        // valid
-    }
-    else
-    {
-        return 0;
-    }
+    ASSERT_OR_RETURN((intention == 1 || intention == 2 || (support_transfer && intention == 3)));
 
-    reader_index += varint.bytes;
+    struct ipv4_flow_key flow_key_copy = (*flow_key);
 
     // this packet contained exactly the handshake
-    if (reader_index == packet_end)
+    if (reader_index == payload_end)
     {
+        if(intention == 1) {
+            LOG_DEBUG(flow_key_copy, "handshake with status request");
+        } else {
+            LOG_DEBUG(flow_key_copy, "handshake with login request");
+        }
+
         return intention == 1 ? AWAIT_STATUS_REQUEST : AWAIT_LOGIN;
     }
 
     if (intention == 1)
     {
+        LOG_DEBUG(flow_key_copy, "handshake with status request b");
         // the packet also contained the staus request
-        if (inspect_status_request(reader_index, end, packet_end))
+        if (inspect_status_request(reader_index, payload_end, data_end))
         {
             return AWAIT_PING;
         }
     }
     else
     {
-        if (inspect_login_packet(reader_index, end, *protocol_version, packet_end))
+        LOG_DEBUG(flow_key_copy, "handshake with login request b");
+        if (inspect_login_packet(reader_index, payload_end, *protocol_version, data_end))
         {
             // we received login here we have to disable the filter
             return LOGIN_FINISHED;

@@ -15,6 +15,44 @@
 
 #define SECOND_TO_NANOS 1000000000ULL
 
+
+// Returns TRUE if the access would be out of bounds (UNSAFE)
+// Casts everything to (void *) to prevent "distinct pointer type" warnings
+#define OUT_OF_BOUNDS(ptr, n, pend, dend) \
+    ((void *)(ptr) + (n) > (void *)(dend) || (void *)(ptr) + (n) > (void *)(pend))
+
+// Checks bounds. If bad, returns 0. If good, increments ptr.
+// usage: READ_OR_RETURN(reader_index, 2, payload_end, data_end);
+#define READ_OR_RETURN(ptr, n, pend, dend) \
+do { \
+    if (OUT_OF_BOUNDS(ptr, n, pend, dend)) return 0; \
+    ptr += (n); \
+} while(0)
+
+// Reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
+#define READ_VAL_OR_RETURN(dest, ptr, pend, dend) \
+do { \
+    if (OUT_OF_BOUNDS(ptr, sizeof(dest), pend, dend)) return 0; \
+    dest = *(__typeof__(dest) *)(ptr); \
+    ptr += sizeof(dest); \
+} while(0)
+
+// If condition is false, returns 0 immediately.
+#define ASSERT_OR_RETURN(cond) \
+do { \
+    if (!(cond)) return 0; \
+} while(0)
+
+// Reads a VarInt into 'dest_struct', increments 'ptr', or returns 0 on failure.
+// dest_struct: variables of type 'struct varint_value'
+// max_bytes: usually 5 for Int, or 1-2 for lengths
+#define READ_VARINT_OR_RETURN(dest_struct, ptr, max_bytes, pend, dend) \
+do { \
+dest_struct = read_varint_sized(ptr, pend, max_bytes, dend); \
+if (!(dest_struct).bytes) return 0; \
+(ptr) += (dest_struct).bytes; \
+} while(0)
+
 struct ipv4_flow_key
 {
     __u32 src_ip;
@@ -26,10 +64,11 @@ _Static_assert(sizeof(struct ipv4_flow_key) == 12, "ipv4_flow_key size mismatch!
 
 struct text_log {
     struct ipv4_flow_key flow_key;
+    __u32 cpu;
     char msg[64];
 };
 
-_Static_assert(sizeof(struct text_log) == 76, "text_log size mismatch!");
+_Static_assert(sizeof(struct text_log) == 80, "text_log size mismatch!");
 
 struct initial_state
 {
@@ -60,3 +99,38 @@ static __always_inline struct initial_state gen_initial_state(__u16 state, __s32
     };
     return new_state;
 }
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 1024 * 64);
+} debug_events SEC(".maps");
+
+static __always_inline void submit_debug_log(struct ipv4_flow_key key, char *message, __u32 len)
+{
+    struct text_log *e = bpf_ringbuf_reserve(&debug_events, sizeof(struct text_log), 0);
+    if (!e)
+    {
+        return;
+    }
+
+    e->flow_key = key;
+    e->cpu = bpf_get_smp_processor_id();
+    // The compiler unrolls this loop because 'len' comes from a constant in the macro
+    #pragma unroll
+    for (__u32 i = 0; i < 64; i++)
+    {
+        // Copy if within string bounds, otherwise pad with 0
+        if (i < len)
+        {
+            e->msg[i] = message[i];
+        }
+        else
+        {
+            e->msg[i] = 0;
+        }
+    }
+    bpf_ringbuf_submit(e, 0);
+}
+
+#define LOG_DEBUG(key, msg) submit_debug_log(key, msg, sizeof(msg))

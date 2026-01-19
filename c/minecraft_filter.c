@@ -83,41 +83,6 @@ struct
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } connection_throttle SEC(".maps");
 
-struct
-{
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 1024 * 64);
-} debug_events SEC(".maps");
-
-static __always_inline void submit_debug_log(struct ipv4_flow_key key, char *message, __u32 len)
-{
-    struct text_log *e = bpf_ringbuf_reserve(&debug_events, sizeof(struct text_log), 0);
-    if (!e)
-    {
-        return;
-    }
-
-    e->flow_key = key;
-
-    // The compiler unrolls this loop because 'len' comes from a constant in the macro
-    #pragma unroll
-    for (__u32 i = 0; i < 64; i++)
-    {
-        // Copy if within string bounds, otherwise pad with 0
-        if (i < len)
-        {
-            e->msg[i] = message[i];
-        }
-        else
-        {
-            e->msg[i] = 0;
-        }
-    }
-    bpf_ringbuf_submit(e, 0);
-}
-
-#define LOG_DEBUG(key, msg) submit_debug_log(key, msg, sizeof(msg))
-
 #if PROMETHEUS_METRICS
 struct
 {
@@ -358,7 +323,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end)
     {
-        return XDP_ABORTED;
+        return XDP_DROP;
     }
 
     if (eth->h_proto != ETH_IP_PROTO)
@@ -369,7 +334,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     struct iphdr *ip = data + sizeof(struct ethhdr);
     if ((void *)(ip + 1) > data_end || ip->ihl < 5)
     {
-        return XDP_ABORTED;
+        return XDP_DROP;
     }
 
     if (ip->protocol != IPPROTO_TCP)
@@ -377,11 +342,10 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-    __u16 ip_hdr_len = ip->ihl * 4;
-    struct tcphdr *tcp = data + sizeof(struct ethhdr) + ip_hdr_len;
+    struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
     if ((void *)(tcp + 1) > data_end)
     {
-        return XDP_ABORTED;
+        return XDP_DROP;
     }
 
 
@@ -414,9 +378,8 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
      //bpf_printk("CPU: %u SRC: %x", bpf_get_smp_processor_id(), ip->saddr);
 
-    __u32 key = 0;
-
     #if PROMETHEUS_METRICS
+    __u32 key = 0;
     struct statistics *stats_ptr = bpf_map_lookup_elem(&stats_map, &key);
     if (!stats_ptr)
     {
@@ -532,6 +495,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             LOG_DEBUG(flow_key, "waiting for ack but no ack or invalid seq");
             goto drop;
         }
+        LOG_DEBUG(flow_key, "recieved ack, switch to mc handshake");
         initial_state->state = state = AWAIT_MC_HANDSHAKE;
         if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST) < 0)
         {
@@ -544,23 +508,23 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     }
 
     __u8 *tcp_payload = (__u8 *)((__u8 *)tcp + tcp_hdr_len);
-    __u8 *tcp_payload_end = (__u8 *)data_end;
 
-    __u16 ip_total_len = __builtin_bswap16(ip->tot_len);
+    // total length of ip packet
+    __u16 ip_tot_len = __builtin_bswap16(ip->tot_len);
+    // total ip - ip header - tcp header = length of tcp payload
+    __u16 tcp_payload_len = ip_tot_len - (ip->ihl * 4) - tcp_hdr_len;
+    // tcp payload end = start + length
+    __u8 *tcp_payload_end = tcp_payload + tcp_payload_len;
 
-    // are ip header and tcp header contained in ip packet?
-    __u16 tcp_payload_len = ip_total_len - ip_hdr_len - tcp_hdr_len;
-
-    __u8 *packet_end = tcp_payload + tcp_payload_len;
 
     // tcp packet is split in multiple ethernet frames, we don't support that
-    if (packet_end > tcp_payload_end)
+    if (tcp_payload_end > (__u8 *) data_end)
     {
         LOG_DEBUG(flow_key, "tcp packet split in multiple frames (block)");
-        goto block_and_drop;
+        goto drop;
     }
 
-    if (tcp_payload < tcp_payload_end && tcp_payload < packet_end)
+    if (tcp_payload < tcp_payload_end)
     {
 
         if (!tcp->ack)
@@ -587,7 +551,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
         if (state == AWAIT_MC_HANDSHAKE)
         {
-            __s32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &initial_state->protocol, packet_end);
+            __s32 next_state = inspect_handshake(&flow_key, tcp_payload, tcp_payload_end, &initial_state->protocol, data_end);
             // if the first packet has invalid length, we can block it
             // even with retransmition this len should always be valid‚
             if (!next_state)
@@ -617,7 +581,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         else if (state == AWAIT_STATUS_REQUEST)
         {
-            if (!inspect_status_request(tcp_payload, tcp_payload_end, packet_end))
+            if (!inspect_status_request(tcp_payload, tcp_payload_end, data_end))
             {
                 LOG_DEBUG(flow_key, "invalid status request (block)");
                 goto block_and_drop;
@@ -628,7 +592,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         else if (state == AWAIT_PING)
         {
-            if (!inspect_ping_request(tcp_payload, tcp_payload_end, packet_end))
+            if (!inspect_ping_request(tcp_payload, tcp_payload_end, data_end))
             {
                 LOG_DEBUG(flow_key, "invalid ping request (block)");
                 goto block_and_drop;
@@ -639,7 +603,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         else if (state == AWAIT_LOGIN)
         {
-            if (!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol, packet_end))
+            if (!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol, data_end))
             {
                 LOG_DEBUG(flow_key, "invalid login packet (block)");
                 goto block_and_drop;

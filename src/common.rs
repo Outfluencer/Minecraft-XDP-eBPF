@@ -20,10 +20,11 @@ impl std::fmt::Display for Ipv4AddrImpl {
 #[derive(Copy, Clone, Debug)]
 pub struct DebugLog {
     pub key: Ipv4FlowKey,
+    pub cpu: u32,
     pub array: [u8; 64], // 1 = blocked, 2 = invalid len, etc.
 }
 
-const _: () = assert!(std::mem::size_of::<DebugLog>() == 76);
+const _: () = assert!(std::mem::size_of::<DebugLog>() == 80);
 
 unsafe impl Pod for DebugLog {}
 

@@ -28,6 +28,7 @@ fn main() {
         }
     }
 
+    // clang -Wall -Wextra -Wno-language-extension-token -O2 -g -target bpf -mcpu=v3 -c minecraft_filter.c -o minecraft_filter.o
     // 2. Compile the C code using clang directly
     let mut command = Command::new("clang");
 

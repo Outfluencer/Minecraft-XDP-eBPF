@@ -52,7 +52,8 @@ fn setup_logging(bpf: &mut aya::Ebpf) {
                     let clean_msg = message.trim_matches('\0');
 
                     info!(
-                        "{}: {}",
+                        "({}) {}: {}",
+                        log.cpu,
                         log.key,
                         clean_msg
                     );
