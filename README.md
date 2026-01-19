@@ -59,8 +59,8 @@ You can configure ports, features, and throttling behavior in the `build.rs` fil
 
 ## Troubleshooting
 
-### None root
-Please always check if you are root if any error occourd, if you are not try again with sudo.  
+### Non-root / Permission Errors
+Please always check if you are running as root if any error occurred. If you are not, try again with `sudo`.  
 
 ### Maps Issue
 If you change map configurations (e.g., enabling Per-CPU maps), you might get map creation errors on restart.
