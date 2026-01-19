@@ -207,7 +207,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u
 
     // host len
     READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
-    ASSERT_IN_RANGE(varint.value, 0, 255 * 3);
+    ASSERT_IN_RANGE(varint.value, 1, 255 * 3);
 
     // read host
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);

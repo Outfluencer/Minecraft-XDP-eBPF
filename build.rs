@@ -6,8 +6,8 @@ fn main() {
     let config = [
         ("ONLY_ASCII_NAMES", "1"),
         ("CONNECTION_THROTTLE", "1"),
-        ("START_PORT", "25533"),
-        ("END_PORT", "25533"),
+        ("START_PORT", "25000"),
+        ("END_PORT", "26000"),
         ("PROMETHEUS_METRICS", "1"),
         ("IP_AND_PORT_PER_CPU", "1"),
         ("IP_PER_CPU", "1"),

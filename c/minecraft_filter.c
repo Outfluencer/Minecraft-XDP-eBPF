@@ -582,4 +582,4 @@ switch_to_verified:
     return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }
 
-char _license[] SEC("license") = "proprietary";
+char _license[] SEC("license") = "Proprietary";

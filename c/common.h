@@ -78,6 +78,7 @@ struct ipv4_flow_key
 };
 _Static_assert(sizeof(struct ipv4_flow_key) == 12, "ipv4_flow_key size mismatch!");
 
+/*
 struct text_log
 {
     struct ipv4_flow_key flow_key;
@@ -85,7 +86,7 @@ struct text_log
     char msg[64];
 };
 
-_Static_assert(sizeof(struct text_log) == 80, "text_log size mismatch!");
+_Static_assert(sizeof(struct text_log) == 80, "text_log size mismatch!");*/
 
 struct initial_state
 {
