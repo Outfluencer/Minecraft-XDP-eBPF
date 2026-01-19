@@ -46,6 +46,10 @@ do { \
     if (!(cond)) return 0; \
 } while(0)
 
+#define ASSERT_IN_RANGE(val, min, max) \
+do { \
+    if ((val) < (min) || (val) > (max)) return 0; \
+} while(0)
 // Reads a VarInt into 'dest_struct', increments 'ptr', or returns 0 on failure.
 // dest_struct: variables of type 'struct varint_value'
 // max_bytes: usually 5 for Int, or 1-2 for lengths

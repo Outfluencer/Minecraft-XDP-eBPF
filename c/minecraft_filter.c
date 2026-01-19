@@ -348,8 +348,6 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
-
-
     // Check if TCP destination port matches mc server port
     __u16 dest_port = __builtin_bswap16(tcp->dest);
 
@@ -516,6 +514,14 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     // tcp payload end = start + length
     __u8 *tcp_payload_end = tcp_payload + tcp_payload_len;
 
+    if (tcp_payload_len < 5) {
+        struct ipv4_flow_key debug_len = {tcp_payload_len, 0, 0, 0};
+        LOG_DEBUG(debug_len, "DEBUG: tcp_payload_len");
+        debug_len = (struct ipv4_flow_key){ip_tot_len, 0, 0, 0};
+        LOG_DEBUG(debug_len, "DEBUG: ip_tot_len");
+         debug_len = (struct ipv4_flow_key){tcp_hdr_len, 0, 0, 0};
+        LOG_DEBUG(debug_len, "DEBUG: tcp_hdr_len");
+    }
 
     // tcp packet is split in multiple ethernet frames, we don't support that
     if (tcp_payload_end > (__u8 *) data_end)
@@ -557,7 +563,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             if (!next_state)
             {
                 LOG_DEBUG(flow_key, "invalid mc handshake (block)");
-                goto block_and_drop;
+                goto drop;
             }
 
             // fully drop legacy ping
@@ -584,7 +590,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             if (!inspect_status_request(tcp_payload, tcp_payload_end, data_end))
             {
                 LOG_DEBUG(flow_key, "invalid status request (block)");
-                goto block_and_drop;
+                goto drop;
             }
             initial_state->state = AWAIT_PING;
             initial_state->expected_sequence += tcp_payload_len;
@@ -595,7 +601,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             if (!inspect_ping_request(tcp_payload, tcp_payload_end, data_end))
             {
                 LOG_DEBUG(flow_key, "invalid ping request (block)");
-                goto block_and_drop;
+                goto drop;
             }
             initial_state->state = PING_COMPLETE;
             initial_state->expected_sequence += tcp_payload_len;
@@ -606,7 +612,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             if (!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol, data_end))
             {
                 LOG_DEBUG(flow_key, "invalid login packet (block)");
-                goto block_and_drop;
+                goto drop;
             }
             // as tracking ends here we do not need to update the sequence
             // initial_state->expected_sequence += tcp_payload_len;

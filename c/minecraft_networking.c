@@ -1,5 +1,4 @@
 #include <linux/types.h>
-#include "common.h"
 
 // if you are running a premium server, you can enable this, it drops weird usernames
 #ifndef ONLY_ASCII_NAMES
@@ -16,18 +15,18 @@ const __s64 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // le
 
 struct varint_value
 {
-    int value;
-    unsigned int bytes; // 1 to 5 bytes
+    __s32 value;
+    __u32 bytes; // 1 to 5 bytes
 };
 
-static __always_inline struct varint_value varint(int value, unsigned int bytes)
+static __always_inline struct varint_value varint(__s32 value, __u32 bytes)
 {
     return (struct varint_value){value, bytes};
 }
 
 _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
 
-__always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload_end, __u8 max_size, __u8 *data_end)
+__always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload_end, __u8 max_size, void *data_end)
 {
     // Byte 1
     if (max_size < 1 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
@@ -69,20 +68,22 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload
     result |= ((b & 0x7F) << 28);
     if (!(b & 0x80))
         return varint(result, 5);
-error:
-    return varint(0, 0);
+    error:
+        return varint(0, 0);
 }
 
 // checks if the packet contains a valid ping request
-static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *payload_end, __u8 *data_end)
+__attribute__((noinline)) static __u8 inspect_ping_request(__u8 *start, __u8 *payload_end, void *data_end)
 {
-    __u8 packet_length;
-    READ_VAL_OR_RETURN(packet_length, start, payload_end, data_end);
-    ASSERT_OR_RETURN(packet_length == 0x09);
 
-    __u8 packet_id;
-    READ_VAL_OR_RETURN(packet_id, start, payload_end, data_end);
-    ASSERT_OR_RETURN(packet_id == 0x01);
+    register struct varint_value varint;
+    // len
+    READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
+    ASSERT_OR_RETURN(varint.value == 0x09);
+
+    // packet id
+    READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
+    ASSERT_OR_RETURN(varint.value == 0x01);
 
     __u64 timestamp;
     READ_VAL_OR_RETURN(timestamp, start, payload_end, data_end);
@@ -90,30 +91,53 @@ static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *payload_end,
 }
 
 // checks if the packet contains a valid status request
-static __always_inline __u8 inspect_status_request(__u8 *start, __u8 *payload_end, __u8 *data_end)
+__attribute__((noinline)) static __u8 inspect_status_request(__u8 *start, __u8 *payload_end, void *data_end)
 {
-    __u8 packet_length;
-    READ_VAL_OR_RETURN(packet_length, start, payload_end, data_end);
-    ASSERT_OR_RETURN(packet_length == 0x01);
 
-    __u8 packet_id;
-    READ_VAL_OR_RETURN(packet_id, start, payload_end, data_end);
-    ASSERT_OR_RETURN(packet_id == 0x00);
+    #pragma unroll
+    for(__u8 i = 0; i < 10; i++) {
+        if ((void*)(start + i + 1) > data_end) {
+            break;
+        }
+        __u8 value = start[i];
+        struct ipv4_flow_key dump = {value, 0,0,0};
+        LOG_DEBUG(dump, "status request byte");
+    }
 
+    // 1 and 6
+    //__s32 len = payload_end - start;
 
-    return start == payload_end;
+    register struct varint_value varint;
+    // len
+    READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
+    struct ipv4_flow_key dump = {varint.value, 0,0,0};
+    LOG_DEBUG(dump, "status request bytea");
+    ASSERT_OR_RETURN(varint.value == 0x01);
+    
+    LOG_DEBUG(dump, "AFTER ASSERT_OR_RETURN(varint.value == 0x01);");
+    // packet id
+    READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
+    struct ipv4_flow_key dump2 = {varint.value, 0,0,0};
+    LOG_DEBUG(dump2, "status request byteab");
+    ASSERT_OR_RETURN(varint.value == 0x00);
+
+    __u8 v = start == payload_end;
+    struct ipv4_flow_key dump3 = {v, 0,0,0};
+    LOG_DEBUG(dump3, "status request byteac");
+
+    return v;
 }
 
 // checks if the packet contains a valid login request
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
-__attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, __u8 *payload_end, __s32 protocol_version, __u8 *data_end)
+__attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, __u8 *payload_end, __s32 protocol_version, void *data_end)
 {
     // length of the packet
     register struct varint_value varint;
 
     // packet length
     READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
-    ASSERT_OR_RETURN(varint.value <= MAX_LOGIN_LEN);
+    ASSERT_IN_RANGE(varint.value, MIN_LOGIN_LEN, MAX_LOGIN_LEN);
 
     // packet id
     READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
@@ -122,7 +146,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
     // username length
     READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
     // bounce check, invalid username
-    ASSERT_OR_RETURN(varint.value <= 16 * (ONLY_ASCII_NAMES ? 1 : 3));
+    ASSERT_IN_RANGE(varint.value, 1, 16 * (ONLY_ASCII_NAMES ? 1 : 3));
     // skip the username data
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
 
@@ -140,14 +164,14 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
             // login key
             READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
             // assert reasonable size
-            ASSERT_OR_RETURN((varint.value >= 0 && varint.value <= 512));
+            ASSERT_IN_RANGE(varint.value, 0, 512);
             // skip login key
             READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
 
             // signaturey length
             READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
             // assert reasonable size
-            ASSERT_OR_RETURN((varint.value >= 0 && varint.value <= 4096));
+            ASSERT_IN_RANGE(varint.value, 0, 4096);
             // skip signature
             READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
         }
@@ -182,7 +206,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
 // so we have to check for both cases here.
 // this can also happen after retransmition.
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
-__attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *flow_key, __u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, __u8 *data_end)
+__attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *flow_key, __u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
 {
 
     if(OUT_OF_BOUNDS(reader_index, 1, payload_end, data_end))
@@ -199,7 +223,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *f
     // packet length
     register struct varint_value varint;
     READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
-    ASSERT_OR_RETURN(varint.value <= MAX_HANDSHAKE_LEN);
+    ASSERT_IN_RANGE(varint.value, MIN_HANDSHAKE_LEN, MAX_HANDSHAKE_LEN);
 
     // packet id
     READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
@@ -211,7 +235,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(struct ipv4_flow_key *f
 
     // host len
     READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
-    ASSERT_OR_RETURN(varint.value <= 255 * 3);
+    ASSERT_IN_RANGE(varint.value, 0, 255 * 3);
 
     // read host
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
