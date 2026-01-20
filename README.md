@@ -68,11 +68,4 @@ Clear the generic BPF filesystem:
 ```bash
 sudo rm -r /sys/fs/bpf
 ```
-
-## Related Projects
-- **BungeeCord Filter Addon**: Plugin to sync bans between this XDP filter and BungeeCord.
-  [https://github.com/Outfluencer/Minecraft-XDP-eBPF-Server-Addon/](https://github.com/Outfluencer/Minecraft-XDP-eBPF-Server-Addon/)
-
----
 ⭐ **Don't forget to star the project on GitHub!**  
-[Watch Setup Tutorial](https://youtu.be/Tq8QHJAMhRc)
