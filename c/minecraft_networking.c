@@ -46,7 +46,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
 
     // packet length
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
-    ASSERT_IN_RANGE(varint.value, PACKET_ID_MAX + LOGIN_DATA_MIN, PACKET_ID_MAX + LOGIN_DATA_MAX);
+    ASSERT_IN_RANGE(varint.value, PACKET_ID_MIN + LOGIN_DATA_MIN, PACKET_ID_MAX + LOGIN_DATA_MAX);
 
     // packet id
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
