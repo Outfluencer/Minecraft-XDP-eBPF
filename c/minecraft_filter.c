@@ -341,7 +341,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             __s32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &initial_state->protocol, data_end);
             // if the first packet has invalid length, we can block it
-            // even with retransmition this len should always be valid‚
+            // even with retransmission this len should always be valid‚
             if (!next_state)
             {
                 goto drop;

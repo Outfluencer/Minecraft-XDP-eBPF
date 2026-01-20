@@ -109,7 +109,7 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
 
 // check for valid handshake packet
 // note: it happens that the handshake and login or status request are in the same packet,
-// so we have to check for both cases here. this can also happen after retransmition.
+// so we have to check for both cases here. this can also happen after retransmission.
 __attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
 {
 
