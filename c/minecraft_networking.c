@@ -151,7 +151,7 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u
     bpf_printk("j");
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
         bpf_printk("k");
-    ASSERT_IN_RANGE(varint.value, HANDSHAKE_HOSTLEN_MIN, HANDSHAKE_HOSTLEN_MAX);
+    ASSERT_IN_RANGE(varint.value, HANDSHAKE_HOST_DATA_MIN, HANDSHAKE_HOST_DATA_MAX);
     // read host
             bpf_printk("l");
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
