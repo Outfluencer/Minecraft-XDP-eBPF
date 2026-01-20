@@ -18,12 +18,12 @@
 
 #define SECOND_TO_NANOS 1000000000ULL
 
-// returns TRUE if the access would be out of bounds (UNSAFE)
+// returns true if the access would be out of bounds (UNSAFE)
 // casts everything to (void *) to prevent "distinct pointer type" warnings
 #define OUT_OF_BOUNDS(ptr, n, pend, dend) \
     ((void *)(ptr) + (n) > (void *)(dend) || (void *)(ptr) + (n) > (void *)(pend))
 
-// checks bounds. If bad, returns 0. If good, increments ptr.
+// checks bounds. if bad, returns 0. if good, increments ptr.
 // usage: READ_OR_RETURN(reader_index, 2, payload_end, data_end);
 #define READ_OR_RETURN(ptr, n, pend, dend)     \
     do                                         \
