@@ -18,12 +18,12 @@
 
 #define SECOND_TO_NANOS 1000000000ULL
 
-// Returns TRUE if the access would be out of bounds (UNSAFE)
-// Casts everything to (void *) to prevent "distinct pointer type" warnings
+// returns true if the access would be out of bounds (UNSAFE)
+// casts everything to (void *) to prevent "distinct pointer type" warnings
 #define OUT_OF_BOUNDS(ptr, n, pend, dend) \
     ((void *)(ptr) + (n) > (void *)(dend) || (void *)(ptr) + (n) > (void *)(pend))
 
-// Checks bounds. If bad, returns 0. If good, increments ptr.
+// checks bounds. if bad, returns 0. if good, increments ptr.
 // usage: READ_OR_RETURN(reader_index, 2, payload_end, data_end);
 #define READ_OR_RETURN(ptr, n, pend, dend)     \
     do                                         \
@@ -33,7 +33,7 @@
         ptr += (n);                            \
     } while (0)
 
-// Reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
+// reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
 #define READ_VAL_OR_RETURN(dest, ptr, pend, dend)         \
     do                                                    \
     {                                                     \
@@ -43,7 +43,7 @@
         ptr += sizeof(dest);                              \
     } while (0)
 
-// If condition is false, returns 0 immediately.
+// if condition is false, returns 0 immediately.
 #define ASSERT_OR_RETURN(cond) \
     do                         \
     {                          \
@@ -51,15 +51,15 @@
             return 0;          \
     } while (0)
 
+// if val is not in [min, max], returns 0 immediately.
 #define ASSERT_IN_RANGE(val, min, max)      \
     do                                      \
     {                                       \
         if ((val) < (min) || (val) > (max)) \
             return 0;                       \
     } while (0)
-// Reads a VarInt into 'dest_struct', increments 'ptr', or returns 0 on failure.
-// dest_struct: variables of type 'struct varint_value'
-// max_bytes: usually 5 for Int, or 1-2 for lengths
+
+// reads a varint into 'dest_struct', increments 'ptr', or returns 0 on failure.
 #define READ_VARINT_OR_RETURN(dest_struct, ptr, max_bytes, pend, dend) \
     do                                                                 \
     {                                                                  \
