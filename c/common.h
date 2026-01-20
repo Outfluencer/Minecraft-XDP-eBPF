@@ -69,6 +69,16 @@
         (ptr) += (dest_struct).bytes;                                  \
     } while (0)
 
+// reads a varint into 'dest_struct', increments 'ptr', or returns 0 on failure.
+#define VARINT_OR_DIE(dest_struct, ptr, pend, dend) \
+    do                                                                 \
+    {                                                                  \
+        dest_struct = read_varint_sized(ptr, pend, 5, dend);   \
+        if (!(dest_struct).bytes)                                      \
+            return 0;                                                  \
+        (ptr) += (dest_struct).bytes;                                  \
+    } while (0)
+
 struct ipv4_flow_key
 {
     __u32 src_ip;
