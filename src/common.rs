@@ -15,19 +15,6 @@ impl std::fmt::Display for Ipv4AddrImpl {
     }
 }
 
-// NEW: Event Log Structure
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct DebugLog {
-    pub key: Ipv4FlowKey,
-    pub cpu: u32,
-    pub array: [u8; 64], // 1 = blocked, 2 = invalid len, etc.
-}
-
-const _: () = assert!(std::mem::size_of::<DebugLog>() == 80);
-
-unsafe impl Pod for DebugLog {}
-
 /// Equivalent to `struct ipv4_flow_key`
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

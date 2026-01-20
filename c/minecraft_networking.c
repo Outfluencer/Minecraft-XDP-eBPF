@@ -28,7 +28,7 @@ _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
 
 __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload_end, __u8 max_size, void *data_end)
 {
-    // Byte 1
+    // byte 1
     if (max_size < 1 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
 
@@ -37,7 +37,7 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload
     if (!(b & 0x80))
         return varint(result, 1);
 
-    // Byte 2
+    // byte 2
     if (max_size < 2 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
     b = *start++;
@@ -45,7 +45,7 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload
     if (!(b & 0x80))
         return varint(result, 2);
 
-    // Byte 3
+    // byte 3
     if (max_size < 3 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
     b = *start++;
@@ -53,7 +53,7 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload
     if (!(b & 0x80))
         return varint(result, 3);
 
-    // Byte 4
+    // byte 4
     if (max_size < 4 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
     b = *start++;
@@ -61,7 +61,7 @@ __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload
     if (!(b & 0x80))
         return varint(result, 4);
 
-    // Byte 5
+    // byte 5
     if (max_size < 5 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
         goto error;
     b = *start;

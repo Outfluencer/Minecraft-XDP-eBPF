@@ -51,15 +51,15 @@
             return 0;          \
     } while (0)
 
+// If val is not in [min, max], returns 0 immediately.
 #define ASSERT_IN_RANGE(val, min, max)      \
     do                                      \
     {                                       \
         if ((val) < (min) || (val) > (max)) \
             return 0;                       \
     } while (0)
-// Reads a VarInt into 'dest_struct', increments 'ptr', or returns 0 on failure.
-// dest_struct: variables of type 'struct varint_value'
-// max_bytes: usually 5 for Int, or 1-2 for lengths
+
+// Reads a varint into 'dest_struct', increments 'ptr', or returns 0 on failure.
 #define READ_VARINT_OR_RETURN(dest_struct, ptr, max_bytes, pend, dend) \
     do                                                                 \
     {                                                                  \
@@ -71,7 +71,7 @@
 
 struct ipv4_flow_key
 {
-    __u32 src_ip;
+    __ux32 src_ip;
     __u32 dst_ip;
     __u16 src_port;
     __u16 dst_port;
