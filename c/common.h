@@ -18,12 +18,12 @@
 
 #define SECOND_TO_NANOS 1000000000ULL
 
-// Returns TRUE if the access would be out of bounds (UNSAFE)
-// Casts everything to (void *) to prevent "distinct pointer type" warnings
+// returns TRUE if the access would be out of bounds (UNSAFE)
+// casts everything to (void *) to prevent "distinct pointer type" warnings
 #define OUT_OF_BOUNDS(ptr, n, pend, dend) \
     ((void *)(ptr) + (n) > (void *)(dend) || (void *)(ptr) + (n) > (void *)(pend))
 
-// Checks bounds. If bad, returns 0. If good, increments ptr.
+// checks bounds. If bad, returns 0. If good, increments ptr.
 // usage: READ_OR_RETURN(reader_index, 2, payload_end, data_end);
 #define READ_OR_RETURN(ptr, n, pend, dend)     \
     do                                         \
@@ -33,7 +33,7 @@
         ptr += (n);                            \
     } while (0)
 
-// Reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
+// reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
 #define READ_VAL_OR_RETURN(dest, ptr, pend, dend)         \
     do                                                    \
     {                                                     \
@@ -43,7 +43,7 @@
         ptr += sizeof(dest);                              \
     } while (0)
 
-// If condition is false, returns 0 immediately.
+// if condition is false, returns 0 immediately.
 #define ASSERT_OR_RETURN(cond) \
     do                         \
     {                          \
@@ -51,7 +51,7 @@
             return 0;          \
     } while (0)
 
-// If val is not in [min, max], returns 0 immediately.
+// if val is not in [min, max], returns 0 immediately.
 #define ASSERT_IN_RANGE(val, min, max)      \
     do                                      \
     {                                       \
@@ -59,7 +59,7 @@
             return 0;                       \
     } while (0)
 
-// Reads a varint into 'dest_struct', increments 'ptr', or returns 0 on failure.
+// reads a varint into 'dest_struct', increments 'ptr', or returns 0 on failure.
 #define READ_VARINT_OR_RETURN(dest_struct, ptr, max_bytes, pend, dend) \
     do                                                                 \
     {                                                                  \
@@ -71,7 +71,7 @@
 
 struct ipv4_flow_key
 {
-    __ux32 src_ip;
+    __u32 src_ip;
     __u32 dst_ip;
     __u16 src_port;
     __u16 dst_port;
