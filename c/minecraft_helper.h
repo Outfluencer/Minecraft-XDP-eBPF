@@ -1,5 +1,5 @@
-#ifndef PROTOCOL_LIMITS_H
-#define PROTOCOL_LIMITS_H
+#ifndef MINECRAFT_HELPER_H
+#define MINECRAFT_HELPER_H
 
 #include <linux/types.h>
 #include "common.h"
