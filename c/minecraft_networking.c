@@ -115,24 +115,37 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u
 
     if (OUT_OF_BOUNDS(reader_index, 1, payload_end, data_end))
     {
+        bpf_printk("b");
         return 0;
     }
 
     // check for legacy ping
     if (reader_index[0] == (__u8)0xFE)
     {
+        bpf_printk("c");
         return RECEIVED_LEGACY_PING;
     }
 
     // packet length
     struct varint_value varint;
+            bpf_printk("d");
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+            bpf_printk("e");
+
     ASSERT_IN_RANGE(varint.value, (PACKET_ID_MIN + HANDSHAKE_DATA_MIN), (PACKET_ID_MAX + HANDSHAKE_DATA_MAX));
+            bpf_printk("f");
+
     // packet id
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+            bpf_printk("g");
+
     ASSERT_OR_RETURN(varint.value == 0x00); // packet id needs to be 0
+            bpf_printk("h");
+
     // protocol version
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+            bpf_printk("i");
+
     *protocol_version = varint.value;
     // host len
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
