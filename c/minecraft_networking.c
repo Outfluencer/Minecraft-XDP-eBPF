@@ -115,62 +115,39 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u
 
     if (OUT_OF_BOUNDS(reader_index, 1, payload_end, data_end))
     {
-        bpf_printk("b");
         return 0;
     }
 
     // check for legacy ping
     if (reader_index[0] == (__u8)0xFE)
     {
-        bpf_printk("c");
         return RECEIVED_LEGACY_PING;
     }
 
     // packet length
     struct varint_value varint;
-            bpf_printk("d");
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
-            bpf_printk("e");
-
     ASSERT_IN_RANGE(varint.value, (PACKET_ID_MIN + HANDSHAKE_DATA_MIN), (PACKET_ID_MAX + HANDSHAKE_DATA_MAX));
-            bpf_printk("f");
-
     // packet id
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
-            bpf_printk("g");
-
     ASSERT_OR_RETURN(varint.value == 0x00); // packet id needs to be 0
-            bpf_printk("h");
-
     // protocol version
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
-            bpf_printk("i");
-
     *protocol_version = varint.value;
     // host len
-    bpf_printk("j");
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
-        bpf_printk("k");
     ASSERT_IN_RANGE(varint.value, HANDSHAKE_HOST_DATA_MIN, HANDSHAKE_HOST_DATA_MAX);
     // read host
-            bpf_printk("l");
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
     // read port
-                bpf_printk("m");
-
     READ_OR_RETURN(reader_index, 2, payload_end, data_end);
-                bpf_printk("n");
-
     // intention
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
-                bpf_printk("o");
-
     __s32 intention = varint.value;
     __u8 support_transfer = *protocol_version >= 766;
 
     // valid intentions: 1 (status), 2 (login), 3 (login with transfer request) since 766
     ASSERT_OR_RETURN((intention == 1 || intention == 2 || (support_transfer && intention == 3)));
-                bpf_printk("p");
 
     // this packet contained exactly the handshake
     if (reader_index == payload_end)

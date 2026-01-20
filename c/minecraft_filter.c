@@ -312,7 +312,6 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     // tcp packet is split in multiple ethernet frames, we don't support that
     if (tcp_payload_end > (__u8 *)data_end)
     {
-        bpf_printk("a");
         goto drop;
     }
 
@@ -354,7 +353,6 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 drop_connection(stats_ptr, &flow_key);
                 goto drop;
             }
-            bpf_printk("qqqq");
 
             initial_state->state = next_state;
             initial_state->expected_sequence += tcp_payload_len;
@@ -418,4 +416,4 @@ switch_to_verified:
     return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }
 
-char _license[] SEC("license") = "GPL";
+char _license[] SEC("license") = "Proprietary";
