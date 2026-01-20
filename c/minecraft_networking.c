@@ -1,88 +1,19 @@
 #include <linux/types.h>
 
-// if you are running a premium server, you can enable this, it drops weird usernames
-#ifndef ONLY_ASCII_NAMES
-#define ONLY_ASCII_NAMES 0
-#endif
-
-// length pre checks
-const __s64 MIN_HANDSHAKE_LEN = 1 + 1 + 1 + 2 + 2 + 1;
-const __s64 MAX_HANDSHAKE_LEN = 2 + 1 + 5 + (255 * 3) + 2;
-const __s64 MIN_LOGIN_LEN = 1 + 1 + 2; // drop empty names instantly
-const __s64 STATUS_REQUEST_LEN = 2;
-const __s64 PING_REQUEST_LEN = 10;
-const __s64 MAX_LOGIN_LEN = 2 + 1 + (16 * 3) + 1 + 8 + 512 + 2 + 4096 + 2; // len, packetid, name, profilekey, uuid
-
-struct varint_value
-{
-    __s32 value;
-    __u32 bytes; // 1 to 5 bytes
-};
-
-static __always_inline struct varint_value varint(__s32 value, __u32 bytes)
-{
-    return (struct varint_value){value, bytes};
-}
-
-_Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
-
-__always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload_end, __u8 max_size, void *data_end)
-{
-    // byte 1
-    if (max_size < 1 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-
-    register __u8 b = *start++;
-    register __s32 result = (b & 0x7F);
-    if (!(b & 0x80))
-        return varint(result, 1);
-
-    // byte 2
-    if (max_size < 2 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-    b = *start++;
-    result |= ((b & 0x7F) << 7);
-    if (!(b & 0x80))
-        return varint(result, 2);
-
-    // byte 3
-    if (max_size < 3 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-    b = *start++;
-    result |= ((b & 0x7F) << 14);
-    if (!(b & 0x80))
-        return varint(result, 3);
-
-    // byte 4
-    if (max_size < 4 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-    b = *start++;
-    result |= ((b & 0x7F) << 21);
-    if (!(b & 0x80))
-        return varint(result, 4);
-
-    // byte 5
-    if (max_size < 5 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-    b = *start;
-    result |= ((b & 0x7F) << 28);
-    if (!(b & 0x80))
-        return varint(result, 5);
-error:
-    return varint(0, 0);
-}
+#include "minecraft_helper.h"
+#include "common.h"
 
 // checks if the packet contains a valid ping request
 __attribute__((noinline)) static __u8 inspect_ping_request(__u8 *start, __u8 *payload_end, void *data_end)
 {
+    struct varint_value varint;
 
-    register struct varint_value varint;
     // len
-    READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
+    VARINT_OR_DIE(varint, start, payload_end, data_end);
     ASSERT_OR_RETURN(varint.value == 0x09);
 
     // packet id
-    READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
+    VARINT_OR_DIE(varint, start, payload_end, data_end);
     ASSERT_OR_RETURN(varint.value == 0x01);
 
     __u64 timestamp;
@@ -93,13 +24,16 @@ __attribute__((noinline)) static __u8 inspect_ping_request(__u8 *start, __u8 *pa
 // checks if the packet contains a valid status request
 __attribute__((noinline)) static __u8 inspect_status_request(__u8 *start, __u8 *payload_end, void *data_end)
 {
-    register struct varint_value varint;
+    struct varint_value varint;
+
     // len
-    READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
+    VARINT_OR_DIE(varint, start, payload_end, data_end);
     ASSERT_OR_RETURN(varint.value == 0x01);
+
     // packet id
-    READ_VARINT_OR_RETURN(varint, start, 5, payload_end, data_end);
+    VARINT_OR_DIE(varint, start, payload_end, data_end);
     ASSERT_OR_RETURN(varint.value == 0x00);
+
     return start == payload_end;
 }
 
@@ -108,19 +42,19 @@ __attribute__((noinline)) static __u8 inspect_status_request(__u8 *start, __u8 *
 __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, __u8 *payload_end, __s32 protocol_version, void *data_end)
 {
     // length of the packet
-    register struct varint_value varint;
+    struct varint_value varint;
 
     // packet length
-    READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
-    ASSERT_IN_RANGE(varint.value, MIN_LOGIN_LEN, MAX_LOGIN_LEN);
+    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    ASSERT_IN_RANGE(varint.value, PACKET_ID_MIN + LOGIN_DATA_MIN, PACKET_ID_MAX + LOGIN_DATA_MAX);
 
     // packet id
-    READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
+    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
 
     // username length
-    READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
+    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
     // bounce check, invalid username
-    ASSERT_IN_RANGE(varint.value, 1, 16 * (ONLY_ASCII_NAMES ? 1 : 3));
+    ASSERT_IN_RANGE(varint.value, LOGIN_NAME_DATA_MIN, LOGIN_NAME_DATA_MAX);
     // skip the username data
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
 
@@ -135,16 +69,16 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
             READ_OR_RETURN(reader_index, 8, payload_end, data_end);
 
             // login key
-            READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
+            VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
             // assert reasonable size
-            ASSERT_IN_RANGE(varint.value, 0, 512);
+            ASSERT_IN_RANGE(varint.value, LOGIN_KEY_MIN, LOGIN_KEY_MAX);
             // skip login key
             READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
 
             // signaturey length
-            READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
+            VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
             // assert reasonable size
-            ASSERT_IN_RANGE(varint.value, 0, 4096);
+            ASSERT_IN_RANGE(varint.value, LOGIN_SIGNATURE_MIN, LOGIN_SIGNATURE_MAX);
             // skip signature
             READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
         }
@@ -173,11 +107,9 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
     return reader_index == payload_end;
 }
 
-// Check for valid handshake packet
-// Note: it happens that the handshake and login or status request are in the same packet,
-// so we have to check for both cases here.
-// this can also happen after retransmition.
-// see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/Handshake.java
+// check for valid handshake packet
+// note: it happens that the handshake and login or status request are in the same packet,
+// so we have to check for both cases here. this can also happen after retransmission.
 __attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
 {
 
@@ -193,30 +125,24 @@ __attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u
     }
 
     // packet length
-    register struct varint_value varint;
-    READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
-    ASSERT_IN_RANGE(varint.value, MIN_HANDSHAKE_LEN, MAX_HANDSHAKE_LEN);
-
+    struct varint_value varint;
+    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    ASSERT_IN_RANGE(varint.value, (PACKET_ID_MIN + HANDSHAKE_DATA_MIN), (PACKET_ID_MAX + HANDSHAKE_DATA_MAX));
     // packet id
-    READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
+    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
     ASSERT_OR_RETURN(varint.value == 0x00); // packet id needs to be 0
-
     // protocol version
-    READ_VARINT_OR_RETURN(varint, reader_index, 5, payload_end, data_end);
+    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
     *protocol_version = varint.value;
-
     // host len
-    READ_VARINT_OR_RETURN(varint, reader_index, 2, payload_end, data_end);
-    ASSERT_IN_RANGE(varint.value, 1, 255 * 3);
-
+    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    ASSERT_IN_RANGE(varint.value, HANDSHAKE_HOST_DATA_MIN, HANDSHAKE_HOST_DATA_MAX);
     // read host
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
     // read port
     READ_OR_RETURN(reader_index, 2, payload_end, data_end);
-
     // intention
-    READ_VARINT_OR_RETURN(varint, reader_index, 1, payload_end, data_end);
-
+    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
     __s32 intention = varint.value;
     __u8 support_transfer = *protocol_version >= 766;
 

@@ -4,15 +4,17 @@
 #include <linux/types.h>
 
 // bitmask for statistics types
-const __u32 IP_BLOCK = 1u << 0;
-const __u32 VERIFIED = 1u << 1;
-const __u32 DROPPED_PACKET = 1u << 2;
-const __u32 STATE_SWITCH = 1u << 3;
-const __u32 DROP_CONNECTION = 1u << 4;
-const __u32 SYN_RECEIVE = 1u << 5;
-const __u32 TCP_BYPASS = 1u << 6;
-const __u32 INCOMING_BYTES = 1u << 7;
-const __u32 DROPPED_BYTES = 1u << 8;
+enum stats_mask {
+    IP_BLOCK        = 1u << 0,
+    VERIFIED        = 1u << 1,
+    DROPPED_PACKET  = 1u << 2,
+    STATE_SWITCH    = 1u << 3,
+    DROP_CONNECTION = 1u << 4,
+    SYN_RECEIVE     = 1u << 5,
+    TCP_BYPASS      = 1u << 6,
+    INCOMING_BYTES  = 1u << 7,
+    DROPPED_BYTES   = 1u << 8,
+};
 
 struct statistics
 {
@@ -28,5 +30,62 @@ struct statistics
 };
 
 _Static_assert(sizeof(struct statistics) == 72, "statistics size mismatch!");
+
+/*
+ * the compiler will optimize this function well
+ */
+#if PROMETHEUS_METRICS
+static __always_inline void count_stats_impl(struct statistics *stats_ptr, __u32 bitmask, __u64 amount)
+{
+    if (bitmask & INCOMING_BYTES)
+    {
+        stats_ptr->incoming_bytes += amount;
+    }
+
+    if (bitmask & DROPPED_BYTES)
+    {
+        stats_ptr->dropped_bytes += amount;
+    }
+
+    if (bitmask & IP_BLOCK)
+    {
+        stats_ptr->ip_blocks += amount;
+    }
+
+    if (bitmask & VERIFIED)
+    {
+        stats_ptr->verified += amount;
+    }
+
+    if (bitmask & DROPPED_PACKET)
+    {
+        stats_ptr->dropped_packets += amount;
+    }
+
+    if (bitmask & STATE_SWITCH)
+    {
+        stats_ptr->state_switches += amount;
+    }
+
+    if (bitmask & DROP_CONNECTION)
+    {
+        stats_ptr->drop_connection += amount;
+    }
+
+    if (bitmask & SYN_RECEIVE)
+    {
+        stats_ptr->syn += amount;
+    }
+
+    if (bitmask & TCP_BYPASS)
+    {
+        stats_ptr->tcp_bypass += amount;
+    }
+}
+
+#define count_stats(stats_ptr, bitmask, amount) count_stats_impl(stats_ptr, bitmask, amount)
+#else
+#define count_stats(stats_ptr, bitmask, amount)
+#endif
 
 #endif

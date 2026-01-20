@@ -1,22 +1,28 @@
 use anyhow::Context;
 use anyhow::Result;
-use aya::maps::RingBuf;
+
+#[cfg(any(ip_per_cpu, ip_and_port_per_cpu))]
+use aya::maps::PerCpuHashMap;
+#[cfg(any(not(ip_per_cpu), not(ip_and_port_per_cpu)))]
+use aya::maps::HashMap;
+
 use aya::{
     Ebpf, include_bytes_aligned,
-    maps::{HashMap, MapData, PerCpuArray, PerCpuHashMap, PerCpuValues},
+    maps::{MapData, PerCpuArray, PerCpuValues},
     programs::{Xdp, XdpFlags},
 };
+use fern::colors::Color;
+use log::LevelFilter;
 
 use crate::common::Ipv4AddrImpl;
 use crate::mapimpl::XdpMapAbstraction;
-use aya::Pod;
 use clap::Parser;
 use colored::Colorize;
 use common::{Ipv4FlowKey, Statistics};
 use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::AppendCount};
 use lazy_static::lazy_static;
 use libc::{CLOCK_MONOTONIC, clock_gettime, timespec};
-use log::{debug, error, info};
+use log::{error, info};
 #[cfg(prometheus_metrics)]
 use prometheus::{IntCounter, register_int_counter};
 use signal_hook::consts::TERM_SIGNALS;
@@ -85,29 +91,29 @@ lazy_static! {
 
 fn setup_logger() -> Result<(), anyhow::Error> {
     let colors = fern::colors::ColoredLevelConfig::new()
-        .debug(fern::colors::Color::Magenta)
-        .info(fern::colors::Color::Green)
-        .warn(fern::colors::Color::Yellow)
-        .error(fern::colors::Color::Red);
+        .debug(Color::Magenta)
+        .info(Color::Green)
+        .warn(Color::Yellow)
+        .error(Color::Red);
 
     let level_filter = match std::env::var("RUST_LOG") {
         Ok(var) => match var.to_lowercase().as_str() {
-            "off" => log::LevelFilter::Off,
-            "error" => log::LevelFilter::Error,
-            "warn" => log::LevelFilter::Warn,
-            "info" => log::LevelFilter::Info,
-            "debug" => log::LevelFilter::Debug,
-            "trace" => log::LevelFilter::Trace,
-            _ => log::LevelFilter::Info,
+            "off" => LevelFilter::Off,
+            "error" => LevelFilter::Error,
+            "warn" => LevelFilter::Warn,
+            "info" => LevelFilter::Info,
+            "debug" => LevelFilter::Debug,
+            "trace" => LevelFilter::Trace,
+            _ => LevelFilter::Info,
         },
         Err(_) => {
             #[cfg(debug_assertions)]
             {
-                log::LevelFilter::Debug
+                LevelFilter::Debug
             }
             #[cfg(not(debug_assertions))]
             {
-                log::LevelFilter::Info
+                LevelFilter::Info
             }
         }
     };

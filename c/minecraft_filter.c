@@ -89,58 +89,6 @@ static __always_inline __u8 detect_tcp_bypass(struct tcphdr *tcp)
     return 0;
 }
 
-/*
- * the compiler will optimize this function well
- */
-static __always_inline void count_stats(struct statistics *stats_ptr, __u32 bitmask, __u64 amount)
-{
-#if PROMETHEUS_METRICS
-    if (bitmask & INCOMING_BYTES)
-    {
-        stats_ptr->incoming_bytes += amount;
-    }
-
-    if (bitmask & DROPPED_BYTES)
-    {
-        stats_ptr->dropped_bytes += amount;
-    }
-
-    if (bitmask & IP_BLOCK)
-    {
-        stats_ptr->ip_blocks += amount;
-    }
-
-    if (bitmask & VERIFIED)
-    {
-        stats_ptr->verified += amount;
-    }
-
-    if (bitmask & DROPPED_PACKET)
-    {
-        stats_ptr->dropped_packets += amount;
-    }
-
-    if (bitmask & STATE_SWITCH)
-    {
-        stats_ptr->state_switches += amount;
-    }
-
-    if (bitmask & DROP_CONNECTION)
-    {
-        stats_ptr->drop_connection += amount;
-    }
-
-    if (bitmask & SYN_RECEIVE)
-    {
-        stats_ptr->syn += amount;
-    }
-
-    if (bitmask & TCP_BYPASS)
-    {
-        stats_ptr->tcp_bypass += amount;
-    }
-#endif
-}
 
 /*
  * tries to update the initial state, if unsuccessful, packet is dropped
@@ -156,6 +104,11 @@ static __always_inline __s32 update_state_or_drop(__u64 packet_size, struct stat
         return XDP_DROP;
     }
     count_stats(stats_ptr, STATE_SWITCH, 1);
+
+    // for compiler
+    (void)stats_ptr;
+    (void)packet_size;
+
     return XDP_PASS;
 }
 /*
@@ -165,6 +118,7 @@ static __always_inline void drop_connection(struct statistics *stats_ptr, struct
 {
     count_stats(stats_ptr, DROP_CONNECTION, 1);
     bpf_map_delete_elem(&conntrack_map, flow_key);
+    (void)stats_ptr; // for compiler
 }
 /*
  * removes connection from conntrack map and puts it into the player map
@@ -181,6 +135,10 @@ static __always_inline __u32 switch_to_verified(__u64 raw_packet_len, struct sta
         return XDP_DROP;
     }
     count_stats(stats_ptr, VERIFIED, 1);
+    // for compiler
+    (void)raw_packet_len;
+    (void)stats_ptr;
+
     return XDP_PASS;
 }
 
@@ -383,7 +341,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             __s32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &initial_state->protocol, data_end);
             // if the first packet has invalid length, we can block it
-            // even with retransmition this len should always be valid‚
+            // even with retransmission this len should always be valid‚
             if (!next_state)
             {
                 goto drop;
