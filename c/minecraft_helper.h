@@ -69,48 +69,33 @@ static __always_inline struct varint_value varint(__s32 value, __u32 bytes)
 
 _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
 
+// Reads one varint byte, checks bounds, returns result if done, or continues
+#define VARINT_BYTE(ptr, pend, dend, max, idx, shift, result)   \
+    do {                                                         \
+        if ((max) < (idx))                                       \
+            goto error;                                          \
+        if ((void *)(ptr) + 1 > (void *)(dend))                  \
+            goto error;                                          \
+        barrier_var(ptr);                                        \
+        if ((void *)(ptr) + 1 > (void *)(pend))                  \
+            goto error;                                          \
+        barrier_var(ptr);                                        \
+        __u8 _b = *(ptr)++;                                      \
+        (result) |= ((__s32)(_b & 0x7F) << (shift));             \
+        if (!(_b & 0x80))                                        \
+            return varint((result), (idx));                      \
+    } while (0)
+
 static __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload_end, __u8 max_size, void *data_end)
 {
-    // byte 1
-    if (max_size < 1 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
+    __s32 result = 0;
 
-    __u8 b = *start++;
-    __s32 result = (b & 0x7F);
-    if (!(b & 0x80))
-        return varint(result, 1);
+    VARINT_BYTE(start, payload_end, data_end, max_size, 1, 0, result);
+    VARINT_BYTE(start, payload_end, data_end, max_size, 2, 7, result);
+    VARINT_BYTE(start, payload_end, data_end, max_size, 3, 14, result);
+    VARINT_BYTE(start, payload_end, data_end, max_size, 4, 21, result);
+    VARINT_BYTE(start, payload_end, data_end, max_size, 5, 28, result);
 
-    // byte 2
-    if (max_size < 2 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-    b = *start++;
-    result |= ((b & 0x7F) << 7);
-    if (!(b & 0x80))
-        return varint(result, 2);
-
-    // byte 3
-    if (max_size < 3 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-    b = *start++;
-    result |= ((b & 0x7F) << 14);
-    if (!(b & 0x80))
-        return varint(result, 3);
-
-    // byte 4
-    if (max_size < 4 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-    b = *start++;
-    result |= ((b & 0x7F) << 21);
-    if (!(b & 0x80))
-        return varint(result, 4);
-
-    // byte 5
-    if (max_size < 5 || OUT_OF_BOUNDS(start, 1, payload_end, data_end))
-        goto error;
-    b = *start;
-    result |= ((b & 0x7F) << 28);
-    if (!(b & 0x80))
-        return varint(result, 5);
 error:
     return varint(0, 0);
 }
