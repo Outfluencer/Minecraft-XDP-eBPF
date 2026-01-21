@@ -6,9 +6,6 @@ use log::info;
 use std::{fmt::Display, result::Result};
 
 pub trait XdpMapAbstraction<K: Pod + Ord + Display, V: Display> {
-    fn for_each<F>(&self, func: F) -> Result<(), anyhow::Error>
-    where
-        F: FnMut(K, V) -> Result<(), anyhow::Error>;
 
     fn clear(&mut self) -> Result<(), anyhow::Error>;
 
@@ -16,16 +13,6 @@ pub trait XdpMapAbstraction<K: Pod + Ord + Display, V: Display> {
 }
 
 impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V> for HashMap<MapData, K, V> {
-    fn for_each<F>(&self, mut func: F) -> Result<(), anyhow::Error>
-    where
-        F: FnMut(K, V) -> Result<(), anyhow::Error>,
-    {
-        for item in self.iter() {
-            let (k, v) = item?;
-            func(k, v)?;
-        }
-        Ok(())
-    }
 
     fn clear(&mut self) -> Result<(), anyhow::Error> {
         self.remove_if(|_| true)
@@ -36,16 +23,13 @@ impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V> for HashM
         F: FnMut(&V) -> bool,
     {
         let mut keys = Vec::new();
-        self.for_each(|k, v| {
+        for item in self.iter() {
+            let (k, v) = item?;
             if predicate(&v) {
-                keys.push(k);
                 info!("Removing {}: {} from map..", k, v);
+                keys.push(k);
             }
-            Ok(())
-        })?;
-
-        keys.sort_unstable();
-        keys.dedup();
+        }
 
         for k in keys {
             self.remove(&k)?;
@@ -57,19 +41,6 @@ impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V> for HashM
 impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V>
     for PerCpuHashMap<MapData, K, V>
 {
-    fn for_each<F>(&self, mut func: F) -> Result<(), anyhow::Error>
-    where
-        F: FnMut(K, V) -> Result<(), anyhow::Error>,
-    {
-        for item in self.iter() {
-            let (k, values) = item?;
-            for val in values.iter() {
-                func(k, *val)?;
-            }
-        }
-        Ok(())
-    }
-
     fn clear(&mut self) -> Result<(), anyhow::Error> {
         self.remove_if(|_| true)
     }
@@ -80,32 +51,35 @@ impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V>
     {
         let mut keys_to_remove = Vec::new();
 
-        // Helper to check if a value is all zeros (empty/unused slot)
-        let is_zero = |v: &V| -> bool {
-            let bytes = unsafe {
-                std::slice::from_raw_parts(v as *const V as *const u8, std::mem::size_of::<V>())
-            };
-            bytes.iter().all(|&b| b == 0)
-        };
-
         for item in self.iter() {
             let (k, values) = item?;
-            for val in values.iter() {
-                if is_zero(val) {
-                    continue;
-                }
-                if predicate(val) {
+            // With 4-tuple RSS, only ONE CPU should have a non-zero value
+            if let Some(val) = find_active_value(&values) {
+                if predicate(&val) {
+                    info!("Removing {}: {} from per-cpu map..", k, val);
                     keys_to_remove.push(k);
-                    info!("Removing {}: {} from map..", k, val);
-                    break;
                 }
             }
         }
-        keys_to_remove.sort_unstable();
-        keys_to_remove.dedup();
-        for ele in keys_to_remove {
-            self.remove(&ele)?;
+
+        for k in keys_to_remove {
+            self.remove(&k)?;
         }
         Ok(())
     }
+}
+
+
+// Helper to check if a value is all zeros (empty/unused slot)
+#[inline]
+fn is_zero<V: Pod>(v: &V) -> bool {
+    let bytes = unsafe {
+        std::slice::from_raw_parts(v as *const V as *const u8, std::mem::size_of::<V>())
+    };
+    bytes.iter().all(|&b| b == 0)
+}
+
+#[inline]
+fn find_active_value<V: Pod + Copy>(values: &aya::maps::PerCpuValues<V>) -> Option<V> {
+    values.iter().find(|v| !is_zero(*v)).copied()
 }
