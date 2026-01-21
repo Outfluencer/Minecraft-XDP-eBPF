@@ -4,7 +4,7 @@
 #include "common.h"
 
 // checks if the packet contains a valid ping request
-__attribute__((noinline)) static __u8 inspect_ping_request(__u8 *start, __u8 *payload_end, void *data_end)
+static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *payload_end, void *data_end)
 {
     struct varint_value varint;
 
@@ -22,7 +22,7 @@ __attribute__((noinline)) static __u8 inspect_ping_request(__u8 *start, __u8 *pa
 }
 
 // checks if the packet contains a valid status request
-__attribute__((noinline)) static __u8 inspect_status_request(__u8 *start, __u8 *payload_end, void *data_end)
+static __always_inline __u8 inspect_status_request(__u8 *start, __u8 *payload_end, void *data_end)
 {
     struct varint_value varint;
 
@@ -39,7 +39,7 @@ __attribute__((noinline)) static __u8 inspect_status_request(__u8 *start, __u8 *
 
 // checks if the packet contains a valid login request
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
-__attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, __u8 *payload_end, __s32 protocol_version, void *data_end)
+static __always_inline __u8 inspect_login_packet(__u8 *reader_index, __u8 *payload_end, __s32 protocol_version, void *data_end)
 {
     // length of the packet
     struct varint_value varint;
@@ -110,14 +110,9 @@ __attribute__((noinline)) static __u8 inspect_login_packet(__u8 *reader_index, _
 // check for valid handshake packet
 // note: it happens that the handshake and login or status request are in the same packet,
 // so we have to check for both cases here. this can also happen after retransmission.
-__attribute__((noinline)) static __s32 inspect_handshake(__u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
+static __always_inline __s32 inspect_handshake(__u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
 {
-
-    if (OUT_OF_BOUNDS(reader_index, 1, payload_end, data_end))
-    {
-        return 0;
-    }
-
+    CHECK_BOUNDS_OR_RETURN(reader_index, 1, payload_end, data_end);
     // check for legacy ping
     if (reader_index[0] == (__u8)0xFE)
     {

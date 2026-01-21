@@ -18,29 +18,45 @@
 
 #define SECOND_TO_NANOS 1000000000ULL
 
-// returns true if the access would be out of bounds (UNSAFE)
-// casts everything to (void *) to prevent "distinct pointer type" warnings
-#define OUT_OF_BOUNDS(ptr, n, pend, dend) \
-    ((void *)(ptr) + (n) > (void *)(dend) || (void *)(ptr) + (n) > (void *)(pend))
+
+// Checks bounds and returns 0 if out of bounds (does NOT increment ptr)
+#define CHECK_BOUNDS_OR_RETURN(ptr, n, pend, dend)          \
+    do                                                      \
+    {                                                       \
+        if ((void *)(ptr) + (n) > (void *)(dend))           \
+            return 0;                                       \
+        barrier_var(ptr);                                   \
+        if ((void *)(ptr) + (n) > (void *)(pend))           \
+            return 0;                                       \
+        barrier_var(ptr);                                   \
+    } while (0)
 
 // checks bounds. if bad, returns 0. if good, increments ptr.
 // usage: READ_OR_RETURN(reader_index, 2, payload_end, data_end);
-#define READ_OR_RETURN(ptr, n, pend, dend)     \
-    do                                         \
-    {                                          \
-        if (OUT_OF_BOUNDS(ptr, n, pend, dend)) \
-            return 0;                          \
-        ptr += (n);                            \
+#define READ_OR_RETURN(ptr, n, pend, dend)       \
+    do                                           \
+    {                                            \
+        if ((void *)(ptr) + (n) > (void *)(dend)) \
+            return 0;                            \
+        barrier_var(ptr);                        \
+        if ((void *)(ptr) + (n) > (void *)(pend)) \
+            return 0;                            \
+        barrier_var(ptr);                        \
+        ptr += (n);                              \
     } while (0)
 
 // reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
-#define READ_VAL_OR_RETURN(dest, ptr, pend, dend)         \
-    do                                                    \
-    {                                                     \
-        if (OUT_OF_BOUNDS(ptr, sizeof(dest), pend, dend)) \
-            return 0;                                     \
-        dest = *(__typeof__(dest) *)(ptr);                \
-        ptr += sizeof(dest);                              \
+#define READ_VAL_OR_RETURN(dest, ptr, pend, dend)           \
+    do                                                      \
+    {                                                       \
+        if ((void *)(ptr) + sizeof(dest) > (void *)(dend))  \
+            return 0;                                       \
+        barrier_var(ptr);                                   \
+        if ((void *)(ptr) + sizeof(dest) > (void *)(pend))  \
+            return 0;                                       \
+        barrier_var(ptr);                                   \
+        dest = *(__typeof__(dest) *)(ptr);                  \
+        ptr += sizeof(dest);                                \
     } while (0)
 
 // if condition is false, returns 0 immediately.
@@ -60,16 +76,6 @@
     } while (0)
 
 // reads a varint into 'dest_struct', increments 'ptr', or returns 0 on failure.
-#define READ_VARINT_OR_RETURN(dest_struct, ptr, max_bytes, pend, dend) \
-    do                                                                 \
-    {                                                                  \
-        dest_struct = read_varint_sized(ptr, pend, max_bytes, dend);   \
-        if (!(dest_struct).bytes)                                      \
-            return 0;                                                  \
-        (ptr) += (dest_struct).bytes;                                  \
-    } while (0)
-
-// reads a varint into 'dest_struct', increments 'ptr', or returns 0 on failure.
 #define VARINT_OR_DIE(dest_struct, ptr, pend, dend) \
     do                                                                 \
     {                                                                  \
@@ -77,6 +83,7 @@
         if (!(dest_struct).bytes)                                      \
             return 0;                                                  \
         (ptr) += (dest_struct).bytes;                                  \
+        barrier_var(ptr);                                              \
     } while (0)
 
 struct ipv4_flow_key
