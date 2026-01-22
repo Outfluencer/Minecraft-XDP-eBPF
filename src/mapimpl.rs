@@ -2,7 +2,7 @@ use aya::{
     Pod,
     maps::{HashMap, MapData, PerCpuHashMap},
 };
-use log::info;
+use log::debug;
 use std::{fmt::Display, result::Result};
 
 pub trait XdpMapAbstraction<K: Pod + Ord + Display, V: Display> {
@@ -26,7 +26,7 @@ impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V> for HashM
         for item in self.iter() {
             let (k, v) = item?;
             if predicate(&v) {
-                info!("Removing {}: {} from map..", k, v);
+                debug!("Removing {}: {} from map..", k, v);
                 keys.push(k);
             }
         }
@@ -56,7 +56,7 @@ impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V>
             // With 4-tuple RSS, only ONE CPU should have a non-zero value
             if let Some(val) = find_active_value(&values) {
                 if predicate(&val) {
-                    info!("Removing {}: {} from per-cpu map..", k, val);
+                    debug!("Removing {}: {} from per-cpu map..", k, val);
                     keys_to_remove.push(k);
                 }
             }

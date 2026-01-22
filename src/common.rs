@@ -34,7 +34,6 @@ const _: () = assert!(std::mem::size_of::<Ipv4FlowKey>() == 12);
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Statistics {
-    pub ip_blocks: u64,
     pub verified: u64,
     pub dropped_packets: u64,
     pub state_switches: u64,
@@ -47,8 +46,8 @@ pub struct Statistics {
 
 unsafe impl Pod for Statistics {}
 
-// Compile-time check: size == 72 bytes
-const _: () = assert!(std::mem::size_of::<Statistics>() == 72);
+// Compile-time check: size == 64 bytes
+const _: () = assert!(std::mem::size_of::<Statistics>() == 64);
 
 pub fn network_address_to_string(ip: u32) -> String {
     std::net::Ipv4Addr::from(ip.swap_bytes()).to_string()

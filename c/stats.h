@@ -5,20 +5,18 @@
 
 // bitmask for statistics types
 enum stats_mask {
-    IP_BLOCK        = 1u << 0,
-    VERIFIED        = 1u << 1,
-    DROPPED_PACKET  = 1u << 2,
-    STATE_SWITCH    = 1u << 3,
-    DROP_CONNECTION = 1u << 4,
-    SYN_RECEIVE     = 1u << 5,
-    TCP_BYPASS      = 1u << 6,
-    INCOMING_BYTES  = 1u << 7,
-    DROPPED_BYTES   = 1u << 8,
+    VERIFIED        = 1u << 0,
+    DROPPED_PACKET  = 1u << 1,
+    STATE_SWITCH    = 1u << 2,
+    DROP_CONNECTION = 1u << 3,
+    SYN_RECEIVE     = 1u << 4,
+    TCP_BYPASS      = 1u << 5,
+    INCOMING_BYTES  = 1u << 6,
+    DROPPED_BYTES   = 1u << 7,
 };
 
 struct statistics
 {
-    __u64 ip_blocks;
     __u64 verified;
     __u64 dropped_packets;
     __u64 state_switches;
@@ -29,7 +27,7 @@ struct statistics
     __u64 dropped_bytes;
 };
 
-_Static_assert(sizeof(struct statistics) == 72, "statistics size mismatch!");
+_Static_assert(sizeof(struct statistics) == 64, "statistics size mismatch!");
 
 /*
  * the compiler will optimize this function well
@@ -45,11 +43,6 @@ static __always_inline void count_stats_impl(struct statistics *stats_ptr, __u32
     if (bitmask & DROPPED_BYTES)
     {
         stats_ptr->dropped_bytes += amount;
-    }
-
-    if (bitmask & IP_BLOCK)
-    {
-        stats_ptr->ip_blocks += amount;
     }
 
     if (bitmask & VERIFIED)

@@ -1,30 +1,25 @@
-use anyhow::Context;
-use anyhow::Result;
-
-#[cfg(any(ip_per_cpu, ip_and_port_per_cpu))]
-use aya::maps::PerCpuHashMap;
-#[cfg(any(not(ip_per_cpu), not(ip_and_port_per_cpu)))]
-use aya::maps::HashMap;
-
-use aya::{
-    Ebpf, include_bytes_aligned,
-    maps::{MapData, PerCpuArray, PerCpuValues},
-    programs::{Xdp, XdpFlags},
-};
-use fern::colors::Color;
-use log::LevelFilter;
-
 use crate::common::Ipv4AddrImpl;
 use crate::mapimpl::XdpMapAbstraction;
+use anyhow::Context;
+use anyhow::Result;
+use aya::{
+    Ebpf, include_bytes_aligned,
+    maps::{HashMap, MapData, PerCpuArray, PerCpuHashMap, PerCpuValues},
+    programs::{Xdp, XdpFlags},
+};
 use clap::Parser;
 use colored::Colorize;
 use common::{Ipv4FlowKey, Statistics};
+use fern::colors::Color;
 use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::AppendCount};
 use lazy_static::lazy_static;
 use libc::{CLOCK_MONOTONIC, clock_gettime, timespec};
+use log::LevelFilter;
+use log::debug;
+use log::warn;
 use log::{error, info};
 #[cfg(prometheus_metrics)]
-use prometheus::{IntCounter, register_int_counter};
+use prometheus::{IntGauge, register_int_gauge};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Signals;
 use std::fmt::Display;
@@ -67,26 +62,25 @@ const STATS_TRACKING_CYCLE: u64 = 10; // every 10 seconds
 
 #[cfg(prometheus_metrics)]
 lazy_static! {
-    static ref INCOMING_BYTES: IntCounter =
-        register_int_counter!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
-    static ref DROPPED_BYTES: IntCounter =
-        register_int_counter!("minecraft_dropped_bytes", "Total dropped bytes").unwrap();
-    static ref VERIFIED: IntCounter = register_int_counter!(
+    static ref INCOMING_BYTES: IntGauge =
+        register_int_gauge!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
+    static ref DROPPED_BYTES: IntGauge =
+        register_int_gauge!("minecraft_dropped_bytes", "Total dropped bytes").unwrap();
+    static ref VERIFIED: IntGauge = register_int_gauge!(
         "minecraft_verified_connections",
         "Total verified connections"
     )
     .unwrap();
-    static ref DROPPED_PACKETS: IntCounter =
-        register_int_counter!("minecraft_dropped_packets", "Total dropped packets").unwrap();
-    static ref STATE_SWITCHES: IntCounter =
-        register_int_counter!("minecraft_state_switches", "Total state switches").unwrap();
-    static ref DROP_CONNECTION: IntCounter =
-        register_int_counter!("minecraft_dropped_connections", "Total dropped connections")
-            .unwrap();
-    static ref SYN: IntCounter =
-        register_int_counter!("minecraft_syn_packets", "Total SYN packets").unwrap();
-    static ref TCP_BYPASS: IntCounter =
-        register_int_counter!("minecraft_tcp_bypass", "Total TCP bypass attempts").unwrap();
+    static ref DROPPED_PACKETS: IntGauge =
+        register_int_gauge!("minecraft_dropped_packets", "Total dropped packets").unwrap();
+    static ref STATE_SWITCHES: IntGauge =
+        register_int_gauge!("minecraft_state_switches", "Total state switches").unwrap();
+    static ref DROP_CONNECTION: IntGauge =
+        register_int_gauge!("minecraft_dropped_connections", "Total dropped connections").unwrap();
+    static ref SYN: IntGauge =
+        register_int_gauge!("minecraft_syn_packets", "Total SYN packets").unwrap();
+    static ref TCP_BYPASS: IntGauge =
+        register_int_gauge!("minecraft_tcp_bypass", "Total TCP bypass attempts").unwrap();
 }
 
 fn setup_logger() -> Result<(), anyhow::Error> {
@@ -223,7 +217,7 @@ fn start_shutdown_hook(arc: Arc<AtomicBool>, condvar: Arc<Condvar>) {
     let mut signals = Signals::new(TERM_SIGNALS).expect("Couldn't register signals");
     thread::spawn(move || {
         for signal in signals.forever() {
-            info!("Received termination signal: {signal}");
+            warn!("Received termination signal: {signal}");
             shutdown(arc, condvar);
             break; // Stop on first termination signal
         }
@@ -242,8 +236,9 @@ fn start_metrics_server(addr: String) {
         info!("Prometheus metrics server running on {}/metrics", addr);
         for request in server.incoming_requests() {
             if request.url() == "/metrics" {
-                info!("Received metrics request from {:?}", request.remote_addr());
                 use prometheus::Encoder;
+
+                debug!("Received metrics request from {:?}", request.remote_addr());
                 let encoder = prometheus::TextEncoder::new();
                 let metric_families = prometheus::gather();
                 let mut buffer = vec![];
@@ -397,7 +392,7 @@ fn track_stats(
 ) -> Result<(), anyhow::Error> {
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
-        let mut stats = stats_ref
+        let stats = stats_ref
             .lock()
             .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
 
@@ -406,7 +401,6 @@ fn track_stats(
         for cpu_stat in values.iter() {
             total.incoming_bytes += cpu_stat.incoming_bytes;
             total.dropped_bytes += cpu_stat.dropped_bytes;
-            total.ip_blocks += cpu_stat.ip_blocks;
             total.verified += cpu_stat.verified;
             total.dropped_packets += cpu_stat.dropped_packets;
             total.state_switches += cpu_stat.state_switches;
@@ -414,8 +408,8 @@ fn track_stats(
             total.syn += cpu_stat.syn;
             total.tcp_bypass += cpu_stat.tcp_bypass;
         }
-        info!(
-            "Stats: Incoming: {} bytes, Dropped: {} bytes, Packets Dropped: {}, Verified: {}, Syn: {}, Bypass: {}, State Switches: {}, Drop Conn: {}, IP Blocks: {}",
+        debug!(
+            "Stats: Incoming: {} bytes, Dropped: {} bytes, Packets Dropped: {}, Verified: {}, Syn: {}, Bypass: {}, State Switches: {}, Drop Conn: {}",
             total.incoming_bytes,
             total.dropped_bytes,
             total.dropped_packets,
@@ -424,23 +418,18 @@ fn track_stats(
             total.tcp_bypass,
             total.state_switches,
             total.drop_connection,
-            total.ip_blocks
         );
 
-        // Reset stats
-        let zeros = vec![Statistics::default(); values.len()];
-        let new_values = PerCpuValues::try_from(zeros)?;
-        stats.set(0, new_values, 0)?;
-
         // Update Prometheus metrics
-        INCOMING_BYTES.inc_by(total.incoming_bytes);
-        DROPPED_BYTES.inc_by(total.dropped_bytes);
-        VERIFIED.inc_by(total.verified);
-        DROPPED_PACKETS.inc_by(total.dropped_packets);
-        STATE_SWITCHES.inc_by(total.state_switches);
-        DROP_CONNECTION.inc_by(total.drop_connection);
-        SYN.inc_by(total.syn);
-        TCP_BYPASS.inc_by(total.tcp_bypass);
+        INCOMING_BYTES.set(total.incoming_bytes as i64);
+        DROPPED_BYTES.set(total.dropped_bytes as i64);
+        VERIFIED.set(total.verified as i64);
+        DROPPED_PACKETS.set(total.dropped_packets as i64);
+        STATE_SWITCHES.set(total.state_switches as i64);
+        DROP_CONNECTION.set(total.drop_connection as i64);
+        SYN.set(total.syn as i64);
+        TCP_BYPASS.set(total.tcp_bypass as i64);
+        drop(stats); // release lock before waiting
 
         let guard = dummy_mutex
             .lock()
