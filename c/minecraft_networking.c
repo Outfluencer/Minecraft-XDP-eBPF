@@ -8,8 +8,8 @@ static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *payload_end,
 {
     struct varint_value varint;
 
-    // len
-    VARINT_OR_DIE(varint, start, payload_end, data_end);
+    // len 3 bytes varint max
+    PACKET_LEN_OR_DIE(varint, start, payload_end, data_end);
     ASSERT_OR_RETURN(varint.value == 0x09);
 
     // packet id
@@ -26,8 +26,8 @@ static __always_inline __u8 inspect_status_request(__u8 *start, __u8 *payload_en
 {
     struct varint_value varint;
 
-    // len
-    VARINT_OR_DIE(varint, start, payload_end, data_end);
+    // len 3 bytes varint max
+    PACKET_LEN_OR_DIE(varint, start, payload_end, data_end);
     ASSERT_OR_RETURN(varint.value == 0x01);
 
     // packet id
@@ -44,8 +44,8 @@ static __always_inline __u8 inspect_login_packet(__u8 *reader_index, __u8 *paylo
     // length of the packet
     struct varint_value varint;
 
-    // packet length
-    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    // len 3 bytes varint max
+    PACKET_LEN_OR_DIE(varint, reader_index, payload_end, data_end);
     ASSERT_IN_RANGE(varint.value, PACKET_ID_MIN + LOGIN_DATA_MIN, PACKET_ID_MAX + LOGIN_DATA_MAX);
 
     // packet id
@@ -119,9 +119,9 @@ static __always_inline __s32 inspect_handshake(__u8 *reader_index, __u8 *payload
         return RECEIVED_LEGACY_PING;
     }
 
-    // packet length
     struct varint_value varint;
-    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    // len 3 bytes varint max
+    PACKET_LEN_OR_DIE(varint, reader_index, payload_end, data_end);
     ASSERT_IN_RANGE(varint.value, (PACKET_ID_MIN + HANDSHAKE_DATA_MIN), (PACKET_ID_MAX + HANDSHAKE_DATA_MAX));
     // packet id
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
