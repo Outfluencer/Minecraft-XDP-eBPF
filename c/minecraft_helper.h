@@ -74,10 +74,10 @@ _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
     do {                                                         \
         if ((max) < (idx))                                       \
             goto error;                                          \
-        if ((void *)(ptr) + 1 > (void *)(dend))                  \
+        if ((const void *)(ptr) + 1 > (const void *)(dend))                  \
             goto error;                                          \
         barrier_var(ptr);                                        \
-        if ((void *)(ptr) + 1 > (void *)(pend))                  \
+        if ((const void *)(ptr) + 1 > (const void *)(pend))                  \
             goto error;                                          \
         barrier_var(ptr);                                        \
         __u8 _b = *(ptr)++;                                      \
@@ -86,7 +86,7 @@ _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
             return varint((result), (idx));                      \
     } while (0)
 
-static __always_inline struct varint_value read_varint_sized(__u8 *start, __u8 *payload_end, __u8 max_size, void *data_end)
+static __always_inline struct varint_value read_varint_sized(__u8 *start, const __u8 *payload_end, const __u8 max_size, const void *data_end)
 {
     __s32 result = 0;
 

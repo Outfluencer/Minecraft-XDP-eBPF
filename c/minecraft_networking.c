@@ -4,7 +4,7 @@
 #include "common.h"
 
 // checks if the packet contains a valid ping request
-static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *payload_end, void *data_end)
+static __always_inline __u8 inspect_ping_request(__u8 *start, const __u8 *payload_end, const void *data_end)
 {
     struct varint_value varint;
 
@@ -22,7 +22,7 @@ static __always_inline __u8 inspect_ping_request(__u8 *start, __u8 *payload_end,
 }
 
 // checks if the packet contains a valid status request
-static __always_inline __u8 inspect_status_request(__u8 *start, __u8 *payload_end, void *data_end)
+static __always_inline __u8 inspect_status_request(__u8 *start, const __u8 *payload_end, const void *data_end)
 {
     struct varint_value varint;
 
@@ -39,7 +39,7 @@ static __always_inline __u8 inspect_status_request(__u8 *start, __u8 *payload_en
 
 // checks if the packet contains a valid login request
 // see https://github.com/SpigotMC/BungeeCord/blob/master/protocol/src/main/java/net/md_5/bungee/protocol/packet/LoginRequest.java
-static __always_inline __u8 inspect_login_packet(__u8 *reader_index, __u8 *payload_end, __s32 protocol_version, void *data_end)
+static __always_inline __u8 inspect_login_packet(__u8 *reader_index, const __u8 *payload_end, __s32 protocol_version, const void *data_end)
 {
     // length of the packet
     struct varint_value varint;
@@ -110,7 +110,7 @@ static __always_inline __u8 inspect_login_packet(__u8 *reader_index, __u8 *paylo
 // check for valid handshake packet
 // note: it happens that the handshake and login or status request are in the same packet,
 // so we have to check for both cases here. this can also happen after retransmission.
-static __always_inline __s32 inspect_handshake(__u8 *reader_index, __u8 *payload_end, __s32 *protocol_version, void *data_end)
+static __always_inline __s32 inspect_handshake(__u8 *reader_index, const __u8 *payload_end, __s32 *protocol_version, const void *data_end, __u8 **current_reader_index)
 {
     CHECK_BOUNDS_OR_RETURN(reader_index, 1, payload_end, data_end);
     // check for legacy ping
@@ -150,22 +150,6 @@ static __always_inline __s32 inspect_handshake(__u8 *reader_index, __u8 *payload
         return intention == 1 ? AWAIT_STATUS_REQUEST : AWAIT_LOGIN;
     }
 
-    if (intention == 1)
-    {
-        // the packet also contained the staus request
-        if (inspect_status_request(reader_index, payload_end, data_end))
-        {
-            return AWAIT_PING;
-        }
-    }
-    else
-    {
-        if (inspect_login_packet(reader_index, payload_end, *protocol_version, data_end))
-        {
-            // we received login here we have to disable the filter
-            return LOGIN_FINISHED;
-        }
-    }
-
-    return 0;
+    *current_reader_index = reader_index;
+    return intention == 1 ? DIRECT_READ_STATUS_REQUEST : DIRECT_READ_LOGIN;
 }
