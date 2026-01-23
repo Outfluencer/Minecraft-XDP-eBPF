@@ -14,7 +14,8 @@
 #define AWAIT_LOGIN 5
 #define AWAIT_PING 6
 #define PING_COMPLETE 7
-#define LOGIN_FINISHED 8 // disables filter
+#define DIRECT_READ_STATUS_REQUEST 8
+#define DIRECT_READ_LOGIN 9
 
 #define SECOND_TO_NANOS 1000000000ULL
 
@@ -23,10 +24,10 @@
 #define CHECK_BOUNDS_OR_RETURN(ptr, n, pend, dend)          \
     do                                                      \
     {                                                       \
-        if ((void *)(ptr) + (n) > (void *)(dend))           \
+        if ((void *)(ptr) + (n) > (const void *)(dend))           \
             return 0;                                       \
         barrier_var(ptr);                                   \
-        if ((void *)(ptr) + (n) > (void *)(pend))           \
+        if ((void *)(ptr) + (n) > (const void *)(pend))           \
             return 0;                                       \
         barrier_var(ptr);                                   \
     } while (0)
@@ -36,10 +37,10 @@
 #define READ_OR_RETURN(ptr, n, pend, dend)       \
     do                                           \
     {                                            \
-        if ((void *)(ptr) + (n) > (void *)(dend)) \
+        if ((void *)(ptr) + (n) > (const void *)(dend)) \
             return 0;                            \
         barrier_var(ptr);                        \
-        if ((void *)(ptr) + (n) > (void *)(pend)) \
+        if ((void *)(ptr) + (n) > (const void *)(pend)) \
             return 0;                            \
         barrier_var(ptr);                        \
         ptr += (n);                              \
@@ -49,10 +50,10 @@
 #define READ_VAL_OR_RETURN(dest, ptr, pend, dend)           \
     do                                                      \
     {                                                       \
-        if ((void *)(ptr) + sizeof(dest) > (void *)(dend))  \
+        if ((void *)(ptr) + sizeof(dest) > (const void *)(dend))  \
             return 0;                                       \
         barrier_var(ptr);                                   \
-        if ((void *)(ptr) + sizeof(dest) > (void *)(pend))  \
+        if ((void *)(ptr) + sizeof(dest) > (const void *)(pend))  \
             return 0;                                       \
         barrier_var(ptr);                                   \
         dest = *(__typeof__(dest) *)(ptr);                  \
@@ -99,10 +100,10 @@
 
 struct ipv4_flow_key
 {
-    __u32 src_ip;
-    __u32 dst_ip;
-    __u16 src_port;
-    __u16 dst_port;
+    const __u32 src_ip;
+    const __u32 dst_ip;
+    const __u16 src_port;
+    const __u16 dst_port;
 };
 _Static_assert(sizeof(struct ipv4_flow_key) == 12, "ipv4_flow_key size mismatch!");
 
@@ -115,7 +116,7 @@ struct initial_state
 };
 _Static_assert(sizeof(struct initial_state) == 12, "initial_state size mismatch!");
 
-static __always_inline struct ipv4_flow_key gen_ipv4_flow_key(__u32 src_ip, __u32 dst_ip, __u16 src_port, __u16 dst_port)
+static __always_inline struct ipv4_flow_key gen_ipv4_flow_key(const __u32 src_ip, const __u32 dst_ip, const __u16 src_port, const __u16 dst_port)
 {
     struct ipv4_flow_key key = {
         .src_ip = src_ip,
@@ -125,7 +126,7 @@ static __always_inline struct ipv4_flow_key gen_ipv4_flow_key(__u32 src_ip, __u3
     return key;
 }
 
-static __always_inline struct initial_state gen_initial_state(__u16 state, __s32 protocol, __u32 expected_sequence)
+static __always_inline struct initial_state gen_initial_state(const __u16 state, const __s32 protocol, const __u32 expected_sequence)
 {
     struct initial_state new_state = {
         .state = state,
