@@ -350,8 +350,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             // fully drop legacy ping
             if (next_state == RECEIVED_LEGACY_PING)
             {
-                drop_connection(stats_ptr, &flow_key);
-                goto drop;
+                goto drop_connection;
             }
 
             initial_state->state = next_state;
