@@ -3,6 +3,10 @@
 
 #include <linux/types.h>
 
+#ifndef barrier_var
+#define barrier_var(var) asm volatile("" : "+r"(var))
+#endif
+
 // maximum amount of retransmission packets before blocking
 #define MAX_OUT_OF_ORDER 4
 
