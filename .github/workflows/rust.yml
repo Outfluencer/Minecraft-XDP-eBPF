@@ -1,9 +1,7 @@
 name: Rust
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: [ "percpu" ]
 env:
   CARGO_TERM_COLOR: always
 jobs:
