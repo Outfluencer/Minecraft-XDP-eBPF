@@ -9,8 +9,8 @@ fn main() {
         ("START_PORT", "25565"),
         ("END_PORT", "25565"),
         ("PROMETHEUS_METRICS", "1"),
-        ("IP_AND_PORT_PER_CPU", "0"),
-        ("IP_PER_CPU", "0"),
+        ("IP_AND_PORT_PER_CPU", "1"),
+        ("IP_PER_CPU", "1"),
     ];
 
     // Register custom cfg options to avoid warnings
