@@ -246,7 +246,11 @@ fn start_metrics_server(addr: String) {
                     error!("Failed to encode metrics: {}", e);
                     continue;
                 }
-                let response = tiny_http::Response::from_data(buffer);
+                let response = tiny_http::Response::from_data(buffer)
+                    .with_header(tiny_http::Header::from_bytes(
+                        &b"Content-Type"[..],
+                        &b"text/plain; version=0.0.4; charset=utf-8"[..],
+                    ).unwrap());
                 let _ = request.respond(response);
             } else {
                 let _ = request.respond(tiny_http::Response::empty(404));
