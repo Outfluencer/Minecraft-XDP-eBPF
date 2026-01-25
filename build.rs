@@ -1,16 +1,22 @@
+use std::env;
 use std::process::Command;
 
+/// Reads an environment variable or returns the default value
+fn env_or(key: &str, default: &str) -> String {
+    env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
 fn main() {
-    // Shared configuration parameters
-    // You can modify these values here, and they will apply to both Rust and C code.
+    // Configuration via environment variables at build time
+    // Example: ONLY_ASCII_NAMES=1 START_PORT=25565 cargo build    
     let config = [
-        ("ONLY_ASCII_NAMES", "1"),
-        ("CONNECTION_THROTTLE", "1"),
-        ("START_PORT", "25565"),
-        ("END_PORT", "25565"),
-        ("PROMETHEUS_METRICS", "1"),
-        ("IP_AND_PORT_PER_CPU", "0"),
-        ("IP_PER_CPU", "0"),
+        ("ONLY_ASCII_NAMES", env_or("ONLY_ASCII_NAMES", "1")),
+        ("CONNECTION_THROTTLE", env_or("CONNECTION_THROTTLE", "1")),
+        ("START_PORT", env_or("START_PORT", "25565")),
+        ("END_PORT", env_or("END_PORT", "25565")),
+        ("PROMETHEUS_METRICS", env_or("PROMETHEUS_METRICS", "1")),
+        ("IP_AND_PORT_PER_CPU", env_or("IP_AND_PORT_PER_CPU", "0")),
+        ("IP_PER_CPU", env_or("IP_PER_CPU", "0")),
     ];
 
     // Register custom cfg options to avoid warnings
@@ -22,9 +28,11 @@ fn main() {
     for (key, value) in &config {
         println!("cargo:rustc-env={}={}", key, value);
         // Enable #[cfg(key)] if value is "1"
-        if *value == "1" {
+        if value == "1" {
             println!("cargo:rustc-cfg={}", key.to_lowercase());
         }
+        // Rerun if this env var changes
+        println!("cargo:rerun-if-env-changed={}", key);
     }
 
     // clang -Wall -Wextra -Wno-language-extension-token -O2 -g -target bpf -mcpu=v3 -c minecraft_filter.c -o minecraft_filter.o
