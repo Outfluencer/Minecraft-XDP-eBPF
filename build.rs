@@ -17,7 +17,7 @@ fn main() {
         ("PROMETHEUS_METRICS", env_or("PROMETHEUS_METRICS", "1")),
         ("IP_AND_PORT_PER_CPU", env_or("IP_AND_PORT_PER_CPU", "0")),
         ("IP_PER_CPU", env_or("IP_PER_CPU", "0")),
-        ("HIT_COUNT", env_or("IP_PER_CPU", "10")),
+        ("HIT_COUNT", env_or("HIT_COUNT", "10")),
     ];
 
     // Register custom cfg options to avoid warnings
