@@ -13,6 +13,11 @@ The default filtered port is 25565.
 
 ## Installation (Linux)
 
+### Generate your filter binary
+
+Generate here: https://xdp.outfluencer.dev/   
+And than just run the executable.   
+
 ### Prerequisites
 - Rust toolchain (stable)
 - **System Dependencies**:
