@@ -16,12 +16,10 @@
 #include <linux/tcp.h>
 #include <linux/in.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 #include "common.h"
-#include "minecraft_networking.c"
+#include "minecraft_networking.h"
 #include "stats.h"
-
-// Minecraft server port
-const __u16 ETH_IP_PROTO = __constant_htons(ETH_P_IP);
 
 struct
 {
@@ -153,7 +151,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
-    if (eth->h_proto != ETH_IP_PROTO)
+    if (eth->h_proto != bpf_htons(ETH_P_IP))
     {
         return XDP_PASS;
     }

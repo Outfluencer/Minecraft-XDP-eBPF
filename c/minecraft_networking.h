@@ -1,3 +1,6 @@
+#ifndef MINECRAFT_NETWORKING_H
+#define MINECRAFT_NETWORKING_H
+
 #include <linux/types.h>
 
 #include "minecraft_helper.h"
@@ -153,3 +156,5 @@ static __always_inline __s32 inspect_handshake(__u8 *reader_index, const __u8 *p
     *current_reader_index = reader_index;
     return intention == 1 ? DIRECT_READ_STATUS_REQUEST : DIRECT_READ_LOGIN;
 }
+
+#endif
