@@ -12,7 +12,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt update
-        sudo apt install -y wget gcc-multilib libbpf-dev bpftool
+        sudo apt install -y wget gcc-multilib libbpf-dev
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         sudo ./llvm.sh 21 all
