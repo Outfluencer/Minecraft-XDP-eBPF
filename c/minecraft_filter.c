@@ -10,11 +10,7 @@
 #endif
 
 #include <stddef.h>
-#include <linux/bpf.h>
-#include <linux/if_ether.h>
-#include <linux/ip.h>
-#include <linux/tcp.h>
-#include <linux/in.h>
+#include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include "common.h"
 #include "minecraft_networking.c"
