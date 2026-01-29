@@ -1,7 +1,7 @@
 #ifndef STATS_H
 #define STATS_H
 
-#include <linux/types.h>
+#include "vmlinux.h"
 
 // bitmask for statistics types
 enum stats_mask {
