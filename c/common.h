@@ -1,7 +1,7 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#include <linux/types.h>
+#include "vmlinux.h"
 
 #ifndef barrier_var
 #define barrier_var(var) asm volatile("" : "+r"(var))
