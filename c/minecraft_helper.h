@@ -1,7 +1,7 @@
 #ifndef MINECRAFT_HELPER_H
 #define MINECRAFT_HELPER_H
 
-#include <linux/types.h>
+#include "vmlinux.h"
 #include "common.h"
 
 // if you are running a premium server, you can enable this, it drops weird usernames
