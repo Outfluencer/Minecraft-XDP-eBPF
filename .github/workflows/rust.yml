@@ -1,9 +1,7 @@
 name: Rust
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: [ "test2" ]
 env:
   CARGO_TERM_COLOR: always
 jobs:
@@ -14,7 +12,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt update
-        sudo apt install -y gcc-multilib wget gnupg software-properties-common git libbpf-dev musl-tools
+        sudo apt install -y gcc-multilib wget gnupg git libbpf-dev musl-tools
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         sudo ./llvm.sh 21 all
