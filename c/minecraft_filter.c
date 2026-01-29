@@ -13,11 +13,11 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include "common.h"
-#include "minecraft_networking.c"
+#include "minecraft_networking.h"
 #include "stats.h"
 
-// Minecraft server port
 #define ETH_P_IP 0x0800
+
 struct
 {
     __uint(type,
@@ -87,7 +87,7 @@ static __always_inline __u8 detect_tcp_bypass(const struct tcphdr *tcp)
 /*
  * tries to update the initial state, if unsuccessful, packet is dropped
  */
-static __always_inline __s32 update_state_or_drop(const __u64 packet_size, const struct statistics *stats_ptr, const struct initial_state *initial_state, const struct ipv4_flow_key *flow_key)
+static __always_inline __s32 update_state_or_drop(const __u64 packet_size, struct statistics *stats_ptr, const struct initial_state *initial_state, const struct ipv4_flow_key *flow_key)
 {
     // if we update it, it should exist, if not it was removed by another thread
     if (bpf_map_update_elem(&conntrack_map, flow_key, initial_state, BPF_EXIST) < 0)
