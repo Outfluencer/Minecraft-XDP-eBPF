@@ -9,7 +9,6 @@
 #define END_PORT 25565
 #endif
 
-#include <stddef.h>
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include "common.h"
