@@ -53,6 +53,7 @@ static __always_inline __u8 inspect_login_packet(__u8 *reader_index, const __u8 
 
     // packet id
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    ASSERT_OR_RETURN(varint.value == 0x00);
 
     // username length
     VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
