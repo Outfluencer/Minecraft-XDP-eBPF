@@ -39,9 +39,9 @@ struct
 {
     __uint(type,
 #if IP_AND_PORT_PER_CPU
-           BPF_MAP_TYPE_LRU_PERCPU_HASH
+           BPF_MAP_TYPE_PERCPU_HASH
 #else
-           BPF_MAP_TYPE_LRU_HASH
+           BPF_MAP_TYPE_HASH
 #endif
     );
     __uint(max_entries, 65535);
