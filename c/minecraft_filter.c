@@ -151,7 +151,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
-    if (eth->h_proto != bpf_ntohs(ETH_P_IP))
+    if (eth->h_proto != bpf_htons(ETH_P_IP))
     {
         return XDP_PASS;
     }
