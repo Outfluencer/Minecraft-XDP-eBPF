@@ -306,10 +306,14 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         initial_state->state = state = AWAIT_MC_HANDSHAKE;
         bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST);
 
-        // we can drop original ack from the tcp 3 way handshake
+        // we can drop original pure ack from the tcp 3 way handshake
         // the backend will accept the first minecraft data packet as the ack of the 3 way handshake
         // that's an elegant way to only let the backend accept connections that have a mc handshake in it.
-        goto drop;
+        // Only drop if there is no TCP payload; if there is payload, continue into payload inspection.
+        if (tcp_payload >= tcp_payload_end)
+        {
+            goto drop;
+        }
     }
 
     if (tcp_payload < tcp_payload_end)
