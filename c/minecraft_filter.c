@@ -308,7 +308,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
         // we can drop original ack from the tcp 3 way handshake
         // the backend will accept the first minecraft data packet as the ack of the 3 way handshake
-        // thats an elegent way to only let the backend accept connections that have a mc handshake in it.
+        // that's an elegant way to only let the backend accept connections that have a mc handshake in it.
         goto drop;
     }
 
