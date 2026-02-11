@@ -151,7 +151,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
-    if (eth->h_proto != bpf_htons(ETH_P_IP))
+    if (eth->h_proto != bpf_ntohs(ETH_P_IP))
     {
         return XDP_PASS;
     }
@@ -174,7 +174,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     }
 
     // check if TCP destination port matches mc server port
-    const __u16 dest_port = __builtin_bswap16(tcp->dest);
+    const __u16 dest_port = bpf_ntohs(tcp->dest);
 
 #if START_PORT == END_PORT
     if (dest_port != START_PORT)
@@ -250,7 +250,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 #endif
         // compute flow key
         const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
-        const struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, __builtin_bswap32(tcp->seq) + 1);
+        const struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, bpf_ntohl(tcp->seq) + 1);
         if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY) < 0)
         {
             goto drop;
@@ -272,6 +272,22 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
+
+    __u8 *tcp_payload = (__u8 *)((__u8 *)tcp + tcp_hdr_len);
+
+    // total length of ip packet
+    const __u16 ip_tot_len = bpf_ntohs(ip->tot_len);
+    // total ip - ip header - tcp header = length of tcp payload
+    const __u16 tcp_payload_len = ip_tot_len - (ip->ihl * 4) - tcp_hdr_len;
+    // tcp payload end = start + length
+    const __u8 *tcp_payload_end = tcp_payload + tcp_payload_len;
+
+    // tcp packet is split in multiple ethernet frames, we don't support that
+    if (tcp_payload_end > (__u8 *)data_end)
+    {
+        goto drop;
+    }
+
     struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
     if (!initial_state)
     {
@@ -282,32 +298,17 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     if (state == AWAIT_ACK)
     {
         // not an ack or invalid ack number
-        if (!tcp->ack || initial_state->expected_sequence != __builtin_bswap32(tcp->seq))
+        if (!tcp->ack || initial_state->expected_sequence != bpf_ntohl(tcp->seq))
         {
             goto drop;
         }
+
         initial_state->state = state = AWAIT_MC_HANDSHAKE;
-        if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST) < 0)
-        {
-            // we could not update the value, we need to drop.
-            goto drop;
-        }
-        // do not return here, the ack of the tcp handshake can contain application data
-        // return XDP_PASS;
-    }
+        bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST);
 
-    __u8 *tcp_payload = (__u8 *)((__u8 *)tcp + tcp_hdr_len);
-
-    // total length of ip packet
-    const __u16 ip_tot_len = __builtin_bswap16(ip->tot_len);
-    // total ip - ip header - tcp header = length of tcp payload
-    const __u16 tcp_payload_len = ip_tot_len - (ip->ihl * 4) - tcp_hdr_len;
-    // tcp payload end = start + length
-    const __u8 *tcp_payload_end = tcp_payload + tcp_payload_len;
-
-    // tcp packet is split in multiple ethernet frames, we don't support that
-    if (tcp_payload_end > (__u8 *)data_end)
-    {
+        // we can drop original ack from the tcp 3 way handshake
+        // the backend will accept the first minecraft data packet as the ack of the 3 way handshake
+        // thats an elegent way to only let the backend accept connections that have a mc handshake in it.
         goto drop;
     }
 
@@ -322,7 +323,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         // we fully track the tcp packet order with this check,
         // this mean we can hard punish invalid packets below, as they are not out of order
         // but invalid data
-        if (initial_state->expected_sequence != __builtin_bswap32(tcp->seq))
+        if (initial_state->expected_sequence != bpf_ntohl(tcp->seq))
         {
             if (++initial_state->fails > MAX_OUT_OF_ORDER)
             {
@@ -395,6 +396,10 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             goto drop_connection;
         }
+    } else if (state == AWAIT_MC_HANDSHAKE) {
+        // no ack's are allowed, we are waiting for the handshake
+        // otherwise an attacker could bypass the 3 way handshake hack
+        goto drop;
     }
     return XDP_PASS;
 
