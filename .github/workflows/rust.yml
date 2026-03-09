@@ -32,10 +32,12 @@ jobs:
     - name: Upload xdp_loader artifact
       uses: actions/upload-artifact@v7
       with:
+        archive: false
         name: xdp_loader
         path: ./target/x86_64-unknown-linux-musl/release/xdp-loader
     - name: Upload bpf object artifact
       uses: actions/upload-artifact@v7
       with:
+        archive: false
         name: minecraft_filter.o
         path: ./c/minecraft_filter.o
