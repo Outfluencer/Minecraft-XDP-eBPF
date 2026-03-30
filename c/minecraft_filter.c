@@ -88,27 +88,6 @@ static __always_inline __u8 detect_tcp_bypass(const struct tcphdr *tcp)
 }
 
 /*
- * tries to update the initial state, if unsuccessful, packet is dropped
- */
-static __always_inline __s32 update_state_or_drop(const __u64 packet_size, const struct statistics *stats_ptr, const struct initial_state *initial_state, const struct ipv4_flow_key *flow_key)
-{
-    // if we update it, it should exist, if not it was removed by another thread
-    if (bpf_map_update_elem(&conntrack_map, flow_key, initial_state, BPF_EXIST) < 0)
-    {
-        // could not update the value, we need to drop and hope it works next time
-        count_stats(stats_ptr, DROPPED_PACKET, 1);
-        count_stats(stats_ptr, DROPPED_BYTES, packet_size);
-        return XDP_DROP;
-    }
-    count_stats(stats_ptr, STATE_SWITCH, 1);
-
-    // for compiler
-    (void)stats_ptr;
-    (void)packet_size;
-
-    return XDP_PASS;
-}
-/*
  * removes the connection from the conntrack_map
  */
 static __always_inline void remove_connection(const struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
@@ -287,11 +266,6 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             goto drop;
         }
         initial_state->state = state = AWAIT_MC_HANDSHAKE;
-        if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST) < 0)
-        {
-            // we could not update the value, we need to drop.
-            goto drop;
-        }
         // do not return here, the ack of the tcp handshake can contain application data
         // return XDP_PASS;
     }
@@ -328,8 +302,6 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             {
                 goto drop_connection;
             }
-            // if it does not exist the connection was closed by another thread
-            bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST);
             goto drop;
         }
 
@@ -408,7 +380,8 @@ drop:
     return XDP_DROP;
 update_state_or_drop:
     initial_state->expected_sequence += tcp_payload_len;
-    return update_state_or_drop(raw_packet_len, stats_ptr, initial_state, &flow_key);
+    count_stats(stats_ptr, STATE_SWITCH, 1);
+    return XDP_PASS;
 switch_to_verified:
     return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }
