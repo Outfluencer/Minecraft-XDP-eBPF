@@ -124,7 +124,7 @@ static __always_inline void remove_connection(const struct statistics *stats_ptr
 static __always_inline __u32 switch_to_verified(const __u64 raw_packet_len, const struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
 {
     bpf_map_delete_elem(&conntrack_map, flow_key);
-    __u64 now = bpf_ktime_get_ns();
+    __u64 now = 1;
     if (bpf_map_update_elem(&player_connection_map, flow_key, &now, BPF_NOEXIST) < 0)
     {
         count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
@@ -261,14 +261,10 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
     // compute flow key
     const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
-    __u64 *lastTime = bpf_map_lookup_elem(&player_connection_map, &flow_key);
-    if (lastTime)
+    __u64 *p_counter = bpf_map_lookup_elem(&player_connection_map, &flow_key);
+    if (p_counter)
     {
-        __u64 now = bpf_ktime_get_ns();
-        if (*lastTime + (SECOND_TO_NANOS * 10) < now)
-        {
-            *lastTime = now;
-        }
+        (*p_counter)++;
         return XDP_PASS;
     }
 

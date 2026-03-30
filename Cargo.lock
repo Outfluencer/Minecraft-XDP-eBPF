@@ -898,7 +898,6 @@ dependencies = [
  "fern",
  "file-rotate",
  "lazy_static",
- "libc",
  "log",
  "prometheus",
  "signal-hook",
