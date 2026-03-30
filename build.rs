@@ -54,6 +54,7 @@ fn main() {
         "-g",
         "-target", "bpf",
         "-mcpu=v3",
+        "-mattr=+alu32",
         "-c", "minecraft_filter.c",
         "-o", "minecraft_filter.o",
     ]);
