@@ -1,9 +1,9 @@
 name: Rust
 on:
   push:
-    branches: [ "reduce-map-updates" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "reduce-map-updates" ]
+    branches: [ "main" ]
 permissions:
   contents: read
 env:
