@@ -332,7 +332,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 goto read_login;
             }
             initial_state->state = next_state;
-            goto update_state_or_drop;
+            goto update_state;
         }
         if (state == AWAIT_STATUS_REQUEST)
         read_status: {
@@ -341,7 +341,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 goto drop;
             }
             initial_state->state = AWAIT_PING;
-            goto update_state_or_drop;
+            goto update_state;
         }
         if (state == AWAIT_PING)
         {
@@ -350,7 +350,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 goto drop;
             }
             initial_state->state = PING_COMPLETE;
-            goto update_state_or_drop;
+            goto update_state;
         }
         if (state == AWAIT_LOGIN)
         read_login: {
@@ -378,7 +378,7 @@ drop:
     count_stats(stats_ptr, DROPPED_PACKET, 1);
     count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
     return XDP_DROP;
-update_state_or_drop:
+update_state:
     initial_state->expected_sequence += tcp_payload_len;
     count_stats(stats_ptr, STATE_SWITCH, 1);
     return XDP_PASS;
