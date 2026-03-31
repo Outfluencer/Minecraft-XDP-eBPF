@@ -96,6 +96,7 @@ static __always_inline void remove_connection(const struct statistics *stats_ptr
     bpf_map_delete_elem(&conntrack_map, flow_key);
     (void)stats_ptr; // for compiler
 }
+
 /*
  * removes connection from conntrack map and puts it into the player map
  * no more packets of this connection will be checked now
@@ -103,8 +104,9 @@ static __always_inline void remove_connection(const struct statistics *stats_ptr
 static __always_inline __u32 switch_to_verified(const __u64 raw_packet_len, const struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
 {
     bpf_map_delete_elem(&conntrack_map, flow_key);
-    __u64 now = 1;
-    if (bpf_map_update_elem(&player_connection_map, flow_key, &now, BPF_NOEXIST) < 0)
+    __u64 count = 1;
+    // timeout after 60 to 120 seconds.
+    if (bpf_map_update_elem(&player_connection_map, flow_key, &count, BPF_NOEXIST) < 0)
     {
         count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
         count_stats(stats_ptr, DROP_CONNECTION | DROPPED_PACKET, 1);
