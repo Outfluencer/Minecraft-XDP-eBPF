@@ -9,23 +9,23 @@ pub trait XdpMapAbstraction<K: Pod + Ord + Display, V: Display> {
 
     fn clear(&mut self) -> Result<(), anyhow::Error>;
 
-    fn remove_if<F: FnMut(&V) -> bool>(&mut self, predicate: F) -> Result<(), anyhow::Error>;
+    fn remove_if<F: FnMut(&K, &V) -> bool>(&mut self, predicate: F) -> Result<(), anyhow::Error>;
 }
 
 impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V> for HashMap<MapData, K, V> {
 
     fn clear(&mut self) -> Result<(), anyhow::Error> {
-        self.remove_if(|_| true)
+        self.remove_if(|_, _| true)
     }
 
     fn remove_if<F>(&mut self, mut predicate: F) -> Result<(), anyhow::Error>
     where
-        F: FnMut(&V) -> bool,
+        F: FnMut(&K, &V) -> bool,
     {
         let mut keys = Vec::new();
         for item in self.iter() {
             let (k, v) = item?;
-            if predicate(&v) {
+            if predicate(&k, &v) {
                 debug!("Removing {}: {} from map..", k, v);
                 keys.push(k);
             }
@@ -42,12 +42,12 @@ impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V>
     for PerCpuHashMap<MapData, K, V>
 {
     fn clear(&mut self) -> Result<(), anyhow::Error> {
-        self.remove_if(|_| true)
+        self.remove_if(|_, _| true)
     }
 
     fn remove_if<F>(&mut self, mut predicate: F) -> Result<(), anyhow::Error>
     where
-        F: FnMut(&V) -> bool,
+        F: FnMut(&K, &V) -> bool,
     {
         let mut keys_to_remove = Vec::new();
 
@@ -55,7 +55,7 @@ impl<K: Pod + Ord + Display, V: Pod + Display> XdpMapAbstraction<K, V>
             let (k, values) = item?;
             // With 4-tuple RSS, only ONE CPU should have a non-zero value
             if let Some(val) = find_active_value(&values) {
-                if predicate(&val) {
+                if predicate(&k, &val) {
                     debug!("Removing {}: {} from per-cpu map..", k, val);
                     keys_to_remove.push(k);
                 }

@@ -88,27 +88,6 @@ static __always_inline __u8 detect_tcp_bypass(const struct tcphdr *tcp)
 }
 
 /*
- * tries to update the initial state, if unsuccessful, packet is dropped
- */
-static __always_inline __s32 update_state_or_drop(const __u64 packet_size, const struct statistics *stats_ptr, const struct initial_state *initial_state, const struct ipv4_flow_key *flow_key)
-{
-    // if we update it, it should exist, if not it was removed by another thread
-    if (bpf_map_update_elem(&conntrack_map, flow_key, initial_state, BPF_EXIST) < 0)
-    {
-        // could not update the value, we need to drop and hope it works next time
-        count_stats(stats_ptr, DROPPED_PACKET, 1);
-        count_stats(stats_ptr, DROPPED_BYTES, packet_size);
-        return XDP_DROP;
-    }
-    count_stats(stats_ptr, STATE_SWITCH, 1);
-
-    // for compiler
-    (void)stats_ptr;
-    (void)packet_size;
-
-    return XDP_PASS;
-}
-/*
  * removes the connection from the conntrack_map
  */
 static __always_inline void remove_connection(const struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
@@ -117,6 +96,7 @@ static __always_inline void remove_connection(const struct statistics *stats_ptr
     bpf_map_delete_elem(&conntrack_map, flow_key);
     (void)stats_ptr; // for compiler
 }
+
 /*
  * removes connection from conntrack map and puts it into the player map
  * no more packets of this connection will be checked now
@@ -124,8 +104,9 @@ static __always_inline void remove_connection(const struct statistics *stats_ptr
 static __always_inline __u32 switch_to_verified(const __u64 raw_packet_len, const struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
 {
     bpf_map_delete_elem(&conntrack_map, flow_key);
-    __u64 now = bpf_ktime_get_ns();
-    if (bpf_map_update_elem(&player_connection_map, flow_key, &now, BPF_NOEXIST) < 0)
+    __u64 count = 1;
+    // timeout after 60 to 120 seconds.
+    if (bpf_map_update_elem(&player_connection_map, flow_key, &count, BPF_NOEXIST) < 0)
     {
         count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
         count_stats(stats_ptr, DROP_CONNECTION | DROPPED_PACKET, 1);
@@ -174,7 +155,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     }
 
     // check if TCP destination port matches mc server port
-    const __u16 dest_port = __builtin_bswap16(tcp->dest);
+    const __u16 dest_port = bpf_ntohs(tcp->dest);
 
 #if START_PORT == END_PORT
     if (dest_port != START_PORT)
@@ -250,7 +231,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 #endif
         // compute flow key
         const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
-        const struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, __builtin_bswap32(tcp->seq) + 1);
+        const struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, bpf_ntohl(tcp->seq) + 1);
         if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY) < 0)
         {
             goto drop;
@@ -261,14 +242,10 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
     // compute flow key
     const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
-    __u64 *lastTime = bpf_map_lookup_elem(&player_connection_map, &flow_key);
-    if (lastTime)
+    __u64 *p_counter = bpf_map_lookup_elem(&player_connection_map, &flow_key);
+    if (p_counter)
     {
-        __u64 now = bpf_ktime_get_ns();
-        if (*lastTime + (SECOND_TO_NANOS * 10) < now)
-        {
-            *lastTime = now;
-        }
+        (*p_counter)++;
         return XDP_PASS;
     }
 
@@ -278,28 +255,10 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         goto drop; // no connection tracked, drop
     }
 
-    __u32 state = initial_state->state;
-    if (state == AWAIT_ACK)
-    {
-        // not an ack or invalid ack number
-        if (!tcp->ack || initial_state->expected_sequence != __builtin_bswap32(tcp->seq))
-        {
-            goto drop;
-        }
-        initial_state->state = state = AWAIT_MC_HANDSHAKE;
-        if (bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST) < 0)
-        {
-            // we could not update the value, we need to drop.
-            goto drop;
-        }
-        // do not return here, the ack of the tcp handshake can contain application data
-        // return XDP_PASS;
-    }
-
     __u8 *tcp_payload = (__u8 *)((__u8 *)tcp + tcp_hdr_len);
 
     // total length of ip packet
-    const __u16 ip_tot_len = __builtin_bswap16(ip->tot_len);
+    const __u16 ip_tot_len = bpf_ntohs(ip->tot_len);
     // total ip - ip header - tcp header = length of tcp payload
     const __u16 tcp_payload_len = ip_tot_len - (ip->ihl * 4) - tcp_hdr_len;
     // tcp payload end = start + length
@@ -309,6 +268,31 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     if (tcp_payload_end > (__u8 *)data_end)
     {
         goto drop;
+    }
+
+    __u32 state = initial_state->state;
+    if (state == AWAIT_ACK)
+    {
+        // not an ack or invalid ack number
+        if (!tcp->ack || initial_state->expected_sequence != bpf_ntohl(tcp->seq))
+        {
+            goto drop;
+        }
+
+        // set state here even tho we may retrun as we need the state for the next packet
+        initial_state->state = state = AWAIT_MC_HANDSHAKE;
+
+        // we can drop original pure ack from the tcp 3 way handshake
+        // the backend will accept the first minecraft data packet as the ack of the 3 way handshake
+        // that's an elegant way to only let the backend accept connections that have a mc handshake in it.
+        // Only drop if there is no TCP payload; if there is payload, continue into payload inspection.
+        if (tcp_payload >= tcp_payload_end)
+        {
+            goto drop;
+        }
+
+        // do not return here, the ack of the tcp handshake can contain application data
+        // return XDP_PASS;
     }
 
     if (tcp_payload < tcp_payload_end)
@@ -322,14 +306,12 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         // we fully track the tcp packet order with this check,
         // this mean we can hard punish invalid packets below, as they are not out of order
         // but invalid data
-        if (initial_state->expected_sequence != __builtin_bswap32(tcp->seq))
+        if (initial_state->expected_sequence != bpf_ntohl(tcp->seq))
         {
             if (++initial_state->fails > MAX_OUT_OF_ORDER)
             {
                 goto drop_connection;
             }
-            // if it does not exist the connection was closed by another thread
-            bpf_map_update_elem(&conntrack_map, &flow_key, initial_state, BPF_EXIST);
             goto drop;
         }
 
@@ -360,7 +342,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 goto read_login;
             }
             initial_state->state = next_state;
-            goto update_state_or_drop;
+            goto update_state;
         }
         if (state == AWAIT_STATUS_REQUEST)
         read_status: {
@@ -369,7 +351,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 goto drop;
             }
             initial_state->state = AWAIT_PING;
-            goto update_state_or_drop;
+            goto update_state;
         }
         if (state == AWAIT_PING)
         {
@@ -378,7 +360,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 goto drop;
             }
             initial_state->state = PING_COMPLETE;
-            goto update_state_or_drop;
+            goto update_state;
         }
         if (state == AWAIT_LOGIN)
         read_login: {
@@ -395,6 +377,10 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         {
             goto drop_connection;
         }
+    } else if (state == AWAIT_MC_HANDSHAKE) {
+        // no ack's are allowed, we are waiting for the handshake
+        // otherwise an attacker could bypass the 3 way handshake hack
+        goto drop; 
     }
     return XDP_PASS;
 
@@ -406,9 +392,10 @@ drop:
     count_stats(stats_ptr, DROPPED_PACKET, 1);
     count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
     return XDP_DROP;
-update_state_or_drop:
+update_state:
     initial_state->expected_sequence += tcp_payload_len;
-    return update_state_or_drop(raw_packet_len, stats_ptr, initial_state, &flow_key);
+    count_stats(stats_ptr, STATE_SWITCH, 1);
+    return XDP_PASS;
 switch_to_verified:
     return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }

@@ -13,7 +13,6 @@ use common::{Ipv4FlowKey, Statistics};
 use fern::colors::Color;
 use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::AppendCount};
 use lazy_static::lazy_static;
-use libc::{CLOCK_MONOTONIC, clock_gettime, timespec};
 use log::LevelFilter;
 use log::debug;
 use log::warn;
@@ -52,8 +51,6 @@ struct Args {
 
 mod common;
 mod mapimpl;
-
-const SECOND_TO_NANOS: u64 = 1_000_000_000;
 
 const OLD_CONNECTION_TIMEOUT: u64 = 60; // every 60 seconds
 const THROTTLE_CLEAR_CYCLE: u64 = 3; // every 3 seconds
@@ -522,17 +519,21 @@ where
     M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static,
 {
     let dummy_mutex = Mutex::new(());
+    let mut last_seen: std::collections::HashMap<Ipv4FlowKey, u64> = std::collections::HashMap::new();
     while running.load(Ordering::SeqCst) {
-        let now = uptime_nanos()?;
+        let mut current_snapshot = std::collections::HashMap::new();
         player_connection_map_ref
             .lock()
             .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
-            .remove_if(|last_update| {
-                (*last_update) + (OLD_CONNECTION_TIMEOUT * SECOND_TO_NANOS) < now
+            .remove_if(|key, counter| {
+                let stale = last_seen.get(key).is_some_and(|prev| *prev == *counter);
+                current_snapshot.insert(*key, *counter);
+                stale
             })?;
+        last_seen = current_snapshot;
         let guard = dummy_mutex
             .lock()
-            .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         let _ = condvar
             .wait_timeout(guard, Duration::from_secs(OLD_CONNECTION_TIMEOUT))
             .map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
@@ -540,16 +541,3 @@ where
     Ok(())
 }
 
-fn uptime_nanos() -> Result<u64, anyhow::Error> {
-    let mut ts = timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    let res = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
-    if res == 0 {
-        Ok((ts.tv_sec as u64) * SECOND_TO_NANOS + (ts.tv_nsec as u64))
-    } else {
-        let err = std::io::Error::last_os_error();
-        Err(anyhow::anyhow!("Failed to get uptime: {}", err))
-    }
-}
