@@ -50,6 +50,14 @@
         ptr += (n);                              \
     } while (0)
 
+// Returns how many bytes a value occupies when encoded as a varint (compile-time).
+// 7 bits per byte: 0-127 → 1, 128-16383 → 2, ... up to 5 bytes max.
+#define VARINT_SIZE(n)                     \
+    (((__u32)(n) <= 0x7F)      ? 1 :       \
+     ((__u32)(n) <= 0x3FFF)    ? 2 :       \
+     ((__u32)(n) <= 0x1FFFFF)  ? 3 :       \
+     ((__u32)(n) <= 0xFFFFFFF) ? 4 : 5)
+
 // reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
 #define READ_VAL_OR_RETURN(dest, ptr, pend, dend)           \
     do                                                      \
