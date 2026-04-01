@@ -12,11 +12,11 @@ static __always_inline __u8 inspect_ping_request(__u8 *start, const __u8 *payloa
     struct varint_value varint;
 
     // len 3 bytes varint max
-    PACKET_LEN_OR_DIE(varint, start, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, start, payload_end, data_end, 1);
     ASSERT_OR_RETURN(varint.value == 0x09);
 
     // packet id
-    VARINT_OR_DIE(varint, start, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, start, payload_end, data_end, 1);
     ASSERT_OR_RETURN(varint.value == 0x01);
 
     __u64 timestamp;
@@ -30,11 +30,11 @@ static __always_inline __u8 inspect_status_request(__u8 *start, const __u8 *payl
     struct varint_value varint;
 
     // len 3 bytes varint max
-    PACKET_LEN_OR_DIE(varint, start, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, start, payload_end, data_end, 1);
     ASSERT_OR_RETURN(varint.value == 0x01);
 
     // packet id
-    VARINT_OR_DIE(varint, start, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, start, payload_end, data_end, 1);
     ASSERT_OR_RETURN(varint.value == 0x00);
 
     return start == payload_end;
@@ -52,11 +52,11 @@ static __always_inline __u8 inspect_login_packet(__u8 *reader_index, const __u8 
     ASSERT_IN_RANGE(varint.value, PACKET_ID_MIN + LOGIN_DATA_MIN, PACKET_ID_MAX + LOGIN_DATA_MAX);
 
     // packet id
-    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, 1);
     ASSERT_OR_RETURN(varint.value == 0x00);
 
     // username length
-    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, 1);
     // bounce check, invalid username
     ASSERT_IN_RANGE(varint.value, LOGIN_NAME_DATA_MIN, LOGIN_NAME_DATA_MAX);
     // skip the username data
@@ -128,20 +128,20 @@ static __always_inline __s32 inspect_handshake(__u8 *reader_index, const __u8 *p
     PACKET_LEN_OR_DIE(varint, reader_index, payload_end, data_end);
     ASSERT_IN_RANGE(varint.value, (PACKET_ID_MIN + HANDSHAKE_DATA_MIN), (PACKET_ID_MAX + HANDSHAKE_DATA_MAX));
     // packet id
-    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, 1);
     ASSERT_OR_RETURN(varint.value == 0x00); // packet id needs to be 0
     // protocol version
-    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, 1);
     *protocol_version = varint.value;
     // host len
-    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, 3);
     ASSERT_IN_RANGE(varint.value, HANDSHAKE_HOST_DATA_MIN, HANDSHAKE_HOST_DATA_MAX);
     // read host
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
     // read port
     READ_OR_RETURN(reader_index, 2, payload_end, data_end);
     // intention
-    VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+    MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, 1);
     __s32 intention = varint.value;
     __u8 support_transfer = *protocol_version >= 766;
 
