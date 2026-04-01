@@ -91,6 +91,16 @@
         barrier_var(ptr);                                              \
     } while (0)
 
+#define MAX_VARINT_OR_DIE(dest_struct, ptr, pend, dend, max) \
+    do                                                                 \
+    {                                                                  \
+        dest_struct = read_varint_sized(ptr, pend, max, dend);   \
+        if (!(dest_struct).bytes)                                      \
+            return 0;                                                  \
+        (ptr) += (dest_struct).bytes;                                  \
+        barrier_var(ptr);                                              \
+    } while (0)
+
 // minecraft has a 21bit varint framedecoder so for packet length by protocol difinition only 3 bytes are allowed
 #define PACKET_LEN_OR_DIE(dest_struct, ptr, pend, dend) \
     do                                                                 \
