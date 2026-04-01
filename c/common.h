@@ -50,6 +50,14 @@
         ptr += (n);                              \
     } while (0)
 
+// Returns how many bytes a value occupies when encoded as a varint (compile-time).
+// 7 bits per byte: 0-127 → 1, 128-16383 → 2, ... up to 5 bytes max.
+#define VARINT_SIZE(n)                     \
+    (((__u32)(n) <= 0x7F)      ? 1 :       \
+     ((__u32)(n) <= 0x3FFF)    ? 2 :       \
+     ((__u32)(n) <= 0x1FFFFF)  ? 3 :       \
+     ((__u32)(n) <= 0xFFFFFFF) ? 4 : 5)
+
 // reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
 #define READ_VAL_OR_RETURN(dest, ptr, pend, dend)           \
     do                                                      \
@@ -91,16 +99,16 @@
         barrier_var(ptr);                                              \
     } while (0)
 
-// minecraft has a 21bit varint framedecoder so for packet length by protocol difinition only 3 bytes are allowed
-#define PACKET_LEN_OR_DIE(dest_struct, ptr, pend, dend) \
+#define MAX_VARINT_OR_DIE(dest_struct, ptr, pend, dend, max) \
     do                                                                 \
     {                                                                  \
-        dest_struct = read_varint_sized(ptr, pend, 3, dend);   \
+        dest_struct = read_varint_sized(ptr, pend, max, dend);   \
         if (!(dest_struct).bytes)                                      \
             return 0;                                                  \
         (ptr) += (dest_struct).bytes;                                  \
         barrier_var(ptr);                                              \
     } while (0)
+
 
 struct ipv4_flow_key
 {
