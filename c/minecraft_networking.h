@@ -73,14 +73,14 @@ static __always_inline __u8 inspect_login_packet(__u8 *reader_index, const __u8 
             READ_OR_RETURN(reader_index, 8, payload_end, data_end);
 
             // login key
-            VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+            MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, 3);
             // assert reasonable size
             ASSERT_IN_RANGE(varint.value, LOGIN_KEY_MIN, LOGIN_KEY_MAX);
             // skip login key
             READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
 
             // signaturey length
-            VARINT_OR_DIE(varint, reader_index, payload_end, data_end);
+            MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, 3);
             // assert reasonable size
             ASSERT_IN_RANGE(varint.value, LOGIN_SIGNATURE_MIN, LOGIN_SIGNATURE_MAX);
             // skip signature
