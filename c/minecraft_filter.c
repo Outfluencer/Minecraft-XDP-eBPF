@@ -259,6 +259,11 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
     // total length of ip packet
     const __u16 ip_tot_len = bpf_ntohs(ip->tot_len);
+    // guard against underflow: if ip_tot_len is too small the subtraction wraps to a large u16
+    if (ip_tot_len < (ip->ihl * 4) + tcp_hdr_len)
+    {
+        goto drop;
+    }
     // total ip - ip header - tcp header = length of tcp payload
     const __u16 tcp_payload_len = ip_tot_len - (ip->ihl * 4) - tcp_hdr_len;
     // tcp payload end = start + length
