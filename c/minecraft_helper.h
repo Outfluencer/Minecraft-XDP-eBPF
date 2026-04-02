@@ -76,7 +76,6 @@ _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
             goto error;                                          \
         if ((const void *)(ptr) + 1 > (const void *)(dend))                  \
             goto error;                                          \
-        barrier_var(ptr);                                        \
         if ((const void *)(ptr) + 1 > (const void *)(pend))                  \
             goto error;                                          \
         barrier_var(ptr);                                        \
