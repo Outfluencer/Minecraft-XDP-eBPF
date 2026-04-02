@@ -70,13 +70,11 @@ static __always_inline struct varint_value varint(__s32 value, __u32 bytes)
 _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
 
 // Reads one varint byte, checks bounds, returns result if done, or continues
-#define VARINT_BYTE(ptr, pend, dend, max, idx, shift, result)   \
+// pend must be validated against data_end before use (see minecraft_filter.c)
+#define VARINT_BYTE(ptr, pend, max, idx, shift, result)   \
     do {                                                         \
         if ((max) < (idx))                                       \
             goto error;                                          \
-        if ((const void *)(ptr) + 1 > (const void *)(dend))                  \
-            goto error;                                          \
-        barrier_var(ptr);                                        \
         if ((const void *)(ptr) + 1 > (const void *)(pend))                  \
             goto error;                                          \
         barrier_var(ptr);                                        \
@@ -86,15 +84,16 @@ _Static_assert(sizeof(struct varint_value) == 8, "varint_value size mismatch!");
             return varint((result), (idx));                      \
     } while (0)
 
-static __always_inline struct varint_value read_varint_sized(__u8 *start, const __u8 *payload_end, const __u8 max_size, const void *data_end)
+// pend must be validated against data_end before use (see minecraft_filter.c)
+static __always_inline struct varint_value read_varint_sized(__u8 *start, const __u8 *payload_end, const __u8 max_size)
 {
     __s32 result = 0;
 
-    VARINT_BYTE(start, payload_end, data_end, max_size, 1, 0, result);
-    VARINT_BYTE(start, payload_end, data_end, max_size, 2, 7, result);
-    VARINT_BYTE(start, payload_end, data_end, max_size, 3, 14, result);
-    VARINT_BYTE(start, payload_end, data_end, max_size, 4, 21, result);
-    VARINT_BYTE(start, payload_end, data_end, max_size, 5, 28, result);
+    VARINT_BYTE(start, payload_end, max_size, 1, 0, result);
+    VARINT_BYTE(start, payload_end, max_size, 2, 7, result);
+    VARINT_BYTE(start, payload_end, max_size, 3, 14, result);
+    VARINT_BYTE(start, payload_end, max_size, 4, 21, result);
+    VARINT_BYTE(start, payload_end, max_size, 5, 28, result);
 
 error:
     return varint(0, 0);

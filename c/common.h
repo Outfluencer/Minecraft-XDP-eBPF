@@ -25,25 +25,21 @@
 
 
 // Checks bounds and returns 0 if out of bounds (does NOT increment ptr)
-#define CHECK_BOUNDS_OR_RETURN(ptr, n, pend, dend)          \
+// pend must be validated against data_end before use (see minecraft_filter.c)
+#define CHECK_BOUNDS_OR_RETURN(ptr, n, pend)          \
     do                                                      \
     {                                                       \
-        if ((void *)(ptr) + (n) > (const void *)(dend))           \
-            return 0;                                       \
-        barrier_var(ptr);                                   \
         if ((void *)(ptr) + (n) > (const void *)(pend))           \
             return 0;                                       \
         barrier_var(ptr);                                   \
     } while (0)
 
 // checks bounds. if bad, returns 0. if good, increments ptr.
-// usage: READ_OR_RETURN(reader_index, 2, payload_end, data_end);
-#define READ_OR_RETURN(ptr, n, pend, dend)       \
+// pend must be validated against data_end before use (see minecraft_filter.c)
+// usage: READ_OR_RETURN(reader_index, 2, payload_end);
+#define READ_OR_RETURN(ptr, n, pend)       \
     do                                           \
     {                                            \
-        if ((void *)(ptr) + (n) > (const void *)(dend)) \
-            return 0;                            \
-        barrier_var(ptr);                        \
         if ((void *)(ptr) + (n) > (const void *)(pend)) \
             return 0;                            \
         barrier_var(ptr);                        \
@@ -59,12 +55,10 @@
      ((__u32)(n) <= 0xFFFFFFF) ? 4 : 5)
 
 // reads a value into 'dest' and increments 'ptr', or returns 0 if OOB
-#define READ_VAL_OR_RETURN(dest, ptr, pend, dend)           \
+// pend must be validated against data_end before use (see minecraft_filter.c)
+#define READ_VAL_OR_RETURN(dest, ptr, pend)           \
     do                                                      \
     {                                                       \
-        if ((void *)(ptr) + sizeof(dest) > (const void *)(dend))  \
-            return 0;                                       \
-        barrier_var(ptr);                                   \
         if ((void *)(ptr) + sizeof(dest) > (const void *)(pend))  \
             return 0;                                       \
         barrier_var(ptr);                                   \
@@ -89,20 +83,22 @@
     } while (0)
 
 // reads a varint into 'dest_struct', increments 'ptr', or returns 0 on failure.
-#define VARINT_OR_DIE(dest_struct, ptr, pend, dend) \
+// pend must be validated against data_end before use (see minecraft_filter.c)
+#define VARINT_OR_DIE(dest_struct, ptr, pend) \
     do                                                                 \
     {                                                                  \
-        dest_struct = read_varint_sized(ptr, pend, 5, dend);   \
+        dest_struct = read_varint_sized(ptr, pend, 5);   \
         if (!(dest_struct).bytes)                                      \
             return 0;                                                  \
         (ptr) += (dest_struct).bytes;                                  \
         barrier_var(ptr);                                              \
     } while (0)
 
-#define MAX_VARINT_OR_DIE(dest_struct, ptr, pend, dend, max) \
+// pend must be validated against data_end before use (see minecraft_filter.c)
+#define MAX_VARINT_OR_DIE(dest_struct, ptr, pend, max) \
     do                                                                 \
     {                                                                  \
-        dest_struct = read_varint_sized(ptr, pend, max, dend);   \
+        dest_struct = read_varint_sized(ptr, pend, max);   \
         if (!(dest_struct).bytes)                                      \
             return 0;                                                  \
         (ptr) += (dest_struct).bytes;                                  \

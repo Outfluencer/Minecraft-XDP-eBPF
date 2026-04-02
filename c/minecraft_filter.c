@@ -264,7 +264,9 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     // tcp payload end = start + length
     const __u8 *tcp_payload_end = tcp_payload + tcp_payload_len;
 
-    // tcp packet is split in multiple ethernet frames, we don't support that
+    // tcp payload end must be within packet bounds
+    // this single check satisfies the verifier for all subsequent payload_end bounds checks
+    // since payload_end <= data_end, checking ptr <= payload_end implies ptr <= data_end
     if (tcp_payload_end > (__u8 *)data_end)
     {
         goto drop;
@@ -320,7 +322,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             // returns the next state
             // if the login data or motd request is included in the same tcp data as the handshake
             // the tcp_payload reader index will be updated to the next position
-            __s32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &initial_state->protocol, data_end, &tcp_payload);
+            __s32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &initial_state->protocol, &tcp_payload);
             // if the first packet has invalid length, we can block it
             // even with retransmission this len should always be valid‚
             if (!next_state)
@@ -346,7 +348,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         if (state == AWAIT_STATUS_REQUEST)
         read_status: {
-            if (!inspect_status_request(tcp_payload, tcp_payload_end, data_end))
+            if (!inspect_status_request(tcp_payload, tcp_payload_end))
             {
                 goto drop;
             }
@@ -355,7 +357,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         }
         if (state == AWAIT_PING)
         {
-            if (!inspect_ping_request(tcp_payload, tcp_payload_end, data_end))
+            if (!inspect_ping_request(tcp_payload, tcp_payload_end))
             {
                 goto drop;
             }
@@ -365,7 +367,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         if (state == AWAIT_LOGIN)
         read_login: {
         
-            if (!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol, data_end))
+            if (!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol))
             {
                 goto drop;
             }
