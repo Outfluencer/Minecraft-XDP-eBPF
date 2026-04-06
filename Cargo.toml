@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 aya = "0.13.1"
 log = "0.4.29"
-signal-hook = "0.4.3"
+signal-hook = "0.4.4"
 anyhow = "1.0.102"
 prometheus = "0.14"
 lazy_static = "1.4"
