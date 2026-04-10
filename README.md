@@ -2,7 +2,7 @@
 
 This project offers a high-performance XDP-based firewall utilizing eBPF, specifically designed for Minecraft Java Edition servers.  
 It effectively mitigates L7 DDoS attacks by filtering malicious packets at the kernel level (before they reach the network stack).  
-Currently, the filter is available for IPv4 and supports Minecraft versions 1.8 - 26.1.1  
+Currently, the filter is available for IPv4 and supports Minecraft versions 1.8 - 26.1.2  
 The default filtered port is 25565.
 
 ## Features
