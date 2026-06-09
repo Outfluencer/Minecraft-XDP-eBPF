@@ -15,12 +15,14 @@ start_port = 25565
 end_port = 25565
 
 # SYN connection throttle: max new connections (SYNs) per source IP within each
-# reset window (see hit_count_reset_secs). Set to 0 to disable throttling.
+# throttle window (see hit_count_reset_secs). Set to 0 to disable throttling.
 hit_count = 10
 
-# Length of the throttle window in seconds: the counters are reset this often.
-# e.g. hit_count = 10 with hit_count_reset_secs = 3 allows 10 new connections
-# per source IP every 3 seconds. Must be >= 1.
+# Length of the throttle window in seconds, enforced inside the eBPF program:
+# each source IP gets its own window starting at its first SYN, and the counter
+# resets in-kernel once the window expires. e.g. hit_count = 10 with
+# hit_count_reset_secs = 3 allows 10 new connections per source IP every
+# 3 seconds. Must be between 1 and 86400 (one day).
 hit_count_reset_secs = 3
 
 # Enforce online-mode username rules during login inspection.
@@ -50,8 +52,8 @@ pub struct Config {
     pub end_port: u16,
     /// Max SYNs per source IP per throttle window (0 = disabled). Maps to `HIT_COUNT`.
     pub hit_count: u32,
-    /// Throttle window length in seconds; how often the userspace loader resets
-    /// the per-IP SYN counters. Not an eBPF global — used by the clear thread only.
+    /// Throttle window length in seconds; each IP's SYN counter resets in-kernel
+    /// once its window expires. Maps to `HIT_COUNT_RESET_NS` (converted to ns).
     pub hit_count_reset_secs: u64,
     /// Enforce online-mode (<= 16 char) usernames. Maps to `ONLINE_NAMES`.
     pub online_names: bool,
@@ -112,6 +114,9 @@ impl Config {
         if self.hit_count_reset_secs == 0 {
             bail!("hit_count_reset_secs must be >= 1");
         }
+        if self.hit_count_reset_secs > 86_400 {
+            bail!("hit_count_reset_secs must be <= 86400 (one day)");
+        }
         Ok(())
     }
 }
@@ -165,6 +170,12 @@ mod tests {
     #[test]
     fn rejects_zero_reset_window() {
         let cfg: Config = toml::from_str("hit_count_reset_secs = 0").unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_reset_window() {
+        let cfg: Config = toml::from_str("hit_count_reset_secs = 86401").unwrap();
         assert!(cfg.validate().is_err());
     }
 }

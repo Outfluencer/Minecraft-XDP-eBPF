@@ -4,6 +4,8 @@
 #include <linux/ip.h>
 #include <linux/tcp.h>
 #include <linux/in.h>
+#include <linux/time.h>
+#include <linux/errno.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 // Runtime configuration. The Rust loader overrides these at load time via
@@ -14,6 +16,7 @@ volatile const __u8 PROMETHEUS = 0;
 volatile const __u32 START_PORT = 25565;
 volatile const __u32 END_PORT = 25565;
 volatile const __u32 HIT_COUNT = 10;
+volatile const __u64 HIT_COUNT_RESET_NS = 3000000000ULL;
 volatile const __u8 ONLINE_NAMES = 1;
 
 #include "common.h"
@@ -29,23 +32,94 @@ struct
     __type(value, struct initial_state); // initial state
 } conntrack_map SEC(".maps");
 
-struct
+// idle check interval for verified connections: removal happens after one to
+// two intervals (60 to 120 seconds) without packets
+#define PLAYER_IDLE_NS (60ULL * SECOND_TO_NANOS)
+
+struct player_entry
 {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 65535);
-    __type(key, struct ipv4_flow_key); // flow key
-    __type(value, __u64);              // last seen timestamp
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} player_connection_map SEC(".maps");
+    struct bpf_timer timer; // deletes the entry when the connection goes idle
+    __u64 packets;          // incremented for every packet of this flow
+    __u64 last_packets;     // snapshot taken by the idle check timer
+};
+_Static_assert(sizeof(struct player_entry) == 32, "player_entry size mismatch!");
 
 struct
 {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 65535);
-    __type(key, __u32);   // ipv4 address
-    __type(value, __u32); // throttle hit counter
+    __type(key, struct ipv4_flow_key);  // flow key
+    __type(value, struct player_entry); // idle timer + packet counter
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} player_connection_map SEC(".maps");
+
+/*
+ * bpf_timer callback: delete the verified connection if it was idle for a
+ * full interval, otherwise snapshot the counter and check again next interval
+ */
+static __s32 player_connection_idle_check(void *map, struct ipv4_flow_key *key, struct player_entry *entry)
+{
+    const __u64 packets = entry->packets;
+    if (packets == entry->last_packets)
+    {
+        bpf_map_delete_elem(map, key);
+        return 0;
+    }
+    entry->last_packets = packets;
+    bpf_timer_start(&entry->timer, PLAYER_IDLE_NS, 0);
+    return 0;
+}
+
+struct throttle_entry
+{
+    struct bpf_timer timer; // deletes the entry when the window expires
+    __u32 hits;             // SYNs counted within the current window
+    __u32 pad;
+};
+_Static_assert(sizeof(struct throttle_entry) == 24, "throttle_entry size mismatch!");
+
+struct
+{
+    // plain HASH on purpose (no LRU): during a big attack the map fills up,
+    // inserts fail and ALL unverified traffic is dropped; only verified
+    // connections keep passing. Capacity recovers in-kernel as the per-entry
+    // timers fire and delete the expired windows.
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 65535);
+    __type(key, __u32);                   // ipv4 address
+    __type(value, struct throttle_entry); // window timer + hit counter
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } connection_throttle SEC(".maps");
+
+// while connection_throttle is full, only retry inserting after this long
+// (per core): a failed insert on a full preallocated map scans every cpu's
+// freelist under spinlocks, so during that time we drop without even trying
+#define THROTTLE_BACKOFF_NS (100ULL * 1000000ULL) // 100ms
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64); // per-cpu: no insert retry before this ktime
+} throttle_insert_backoff SEC(".maps");
+
+/*
+ * bpf_timer callback: the throttle window of this ip is over. Entries that
+ * saw SYNs during the window are recycled (counter reset, timer re-armed) so
+ * repeat senders cause no map/timer churn; entries that were idle for the
+ * whole window are deleted.
+ */
+static __s32 throttle_window_expired(void *map, __u32 *key, struct throttle_entry *entry)
+{
+    if (__sync_lock_test_and_set(&entry->hits, 0) == 0)
+    {
+        bpf_map_delete_elem(map, key);
+        return 0;
+    }
+    bpf_timer_start(&entry->timer, HIT_COUNT_RESET_NS, 0);
+    return 0;
+}
 
 struct
 {
@@ -84,18 +158,30 @@ static __always_inline void remove_connection(const struct statistics *stats_ptr
 static __always_inline __u32 switch_to_verified(const __u64 raw_packet_len, const struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
 {
     bpf_map_delete_elem(&conntrack_map, flow_key);
-    __u64 count = 1;
-    // timeout after 60 to 120 seconds.
-    if (bpf_map_update_elem(&player_connection_map, flow_key, &count, BPF_NOEXIST) < 0)
+    const struct player_entry fresh = {.packets = 1, .last_packets = 0};
+    if (bpf_map_update_elem(&player_connection_map, flow_key, &fresh, BPF_NOEXIST) < 0)
     {
-        count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
-        count_stats(stats_ptr, DROP_CONNECTION | DROPPED_PACKET, 1);
-        return XDP_DROP;
+        goto drop;
+    }
+    struct player_entry *entry = bpf_map_lookup_elem(&player_connection_map, flow_key);
+    if (!entry)
+    {
+        goto drop;
+    }
+    if (bpf_timer_init(&entry->timer, &player_connection_map, CLOCK_MONOTONIC) < 0 ||
+        bpf_timer_set_callback(&entry->timer, player_connection_idle_check) < 0 ||
+        bpf_timer_start(&entry->timer, PLAYER_IDLE_NS, 0) < 0)
+    {
+        // never leak an entry that has no idle timer armed
+        bpf_map_delete_elem(&player_connection_map, flow_key);
+        goto drop;
     }
     count_stats(stats_ptr, VERIFIED, 1);
-    // for compiler
-
     return XDP_PASS;
+drop:
+    count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
+    count_stats(stats_ptr, DROP_CONNECTION | DROPPED_PACKET, 1);
+    return XDP_DROP;
 }
 
 SEC("xdp")
@@ -179,21 +265,56 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     {
         count_stats(stats_ptr, SYN_RECEIVE, 1);
         if(HIT_COUNT) {
-            // connection throttle
-            __u32 *hit_counter = bpf_map_lookup_elem(&connection_throttle, &src_ip);
-            if (hit_counter)
+            // connection throttle, fully in kernel: every source ip gets its
+            // own window of HIT_COUNT_RESET_NS, opened by its first SYN and
+            // closed by the bpf_timer that deletes the entry again
+            struct throttle_entry *entry = bpf_map_lookup_elem(&connection_throttle, &src_ip);
+            if (entry)
             {
-                if (*hit_counter >= HIT_COUNT)
+                if (entry->hits >= HIT_COUNT)
                 {
                     goto drop;
                 }
-                __sync_fetch_and_add(hit_counter, 1);
+                __sync_fetch_and_add(&entry->hits, 1);
             }
             else
             {
-                __u32 new_counter = 1;
-                if (bpf_map_update_elem(&connection_throttle, &src_ip, &new_counter, BPF_NOEXIST) < 0)
+                __u32 zero = 0;
+                __u64 *backoff = bpf_map_lookup_elem(&throttle_insert_backoff, &zero);
+                if (!backoff)
                 {
+                    // this should be impossible
+                    goto drop;
+                }
+                const __u64 now = bpf_ktime_get_ns();
+                if (now < *backoff)
+                {
+                    // the map was full just before: fail closed without
+                    // paying for another doomed insert attempt
+                    goto drop;
+                }
+                const struct throttle_entry fresh = {.hits = 1, .pad = 0};
+                const long err = bpf_map_update_elem(&connection_throttle, &src_ip, &fresh, BPF_NOEXIST);
+                if (err < 0)
+                {
+                    if (err != -EEXIST)
+                    {
+                        // map full (attack): fail closed and back off
+                        *backoff = now + THROTTLE_BACKOFF_NS;
+                    }
+                    goto drop;
+                }
+                entry = bpf_map_lookup_elem(&connection_throttle, &src_ip);
+                if (!entry)
+                {
+                    goto drop;
+                }
+                if (bpf_timer_init(&entry->timer, &connection_throttle, CLOCK_MONOTONIC) < 0 ||
+                    bpf_timer_set_callback(&entry->timer, throttle_window_expired) < 0 ||
+                    bpf_timer_start(&entry->timer, HIT_COUNT_RESET_NS, 0) < 0)
+                {
+                    // never leak an entry that has no expiry timer armed
+                    bpf_map_delete_elem(&connection_throttle, &src_ip);
                     goto drop;
                 }
             }
@@ -212,10 +333,15 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
     // compute flow key
     const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
-    __u64 *p_counter = bpf_map_lookup_elem(&player_connection_map, &flow_key);
-    if (p_counter)
+    struct player_entry *player = bpf_map_lookup_elem(&player_connection_map, &flow_key);
+    if (player)
     {
-        (*p_counter)++;
+        // non-atomic on purpose: racing increments (flow migrating cpus) can
+        // only lose single steps, never regress the counter across a window.
+        // The idle check thus only false-matches if the connection sent
+        // nothing for ~a full window, and minecraft clients keepalive every
+        // few seconds, so such a connection is dead anyway
+        player->packets++;
         return XDP_PASS;
     }
 
@@ -370,4 +496,6 @@ switch_to_verified:
     return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }
 
-char _license[] SEC("license") = "Proprietary";
+// must be GPL-compatible: the bpf_timer_* helpers used by the connection
+// throttle are gpl_only, the kernel refuses to load them otherwise
+char _license[] SEC("license") = "GPL";

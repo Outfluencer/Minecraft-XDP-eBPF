@@ -1,14 +1,12 @@
-use crate::common::Ipv4AddrImpl;
-use anyhow::Context;
 use anyhow::Result;
 use aya::{
     Ebpf, EbpfLoader, include_bytes_aligned,
-    maps::{HashMap, MapData, PerCpuArray},
+    maps::{MapData, PerCpuArray},
     programs::{Xdp, XdpFlags},
 };
 use clap::Parser;
 use colored::Colorize;
-use common::{Ipv4FlowKey, Statistics};
+use common::Statistics;
 use fern::colors::Color;
 use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::AppendCount};
 use lazy_static::lazy_static;
@@ -48,11 +46,9 @@ struct Args {
 
 mod common;
 mod config;
-mod mapimpl;
 
 use config::Config;
 
-const OLD_CONNECTION_TIMEOUT: u64 = 60; // every 60 seconds
 const STATS_TRACKING_CYCLE: u64 = 10; // every 10 seconds
 
 lazy_static! {
@@ -269,11 +265,13 @@ fn load(
     // since `set_global` patches `size_of::<T>()` bytes at the symbol offset:
     //   __u8  PROMETHEUS, ONLINE_NAMES
     //   __u32 START_PORT, END_PORT, HIT_COUNT
+    //   __u64 HIT_COUNT_RESET_NS
     let prometheus: u8 = config.prometheus as u8;
     let online_names: u8 = config.online_names as u8;
     let start_port: u32 = config.start_port as u32;
     let end_port: u32 = config.end_port as u32;
     let hit_count: u32 = config.hit_count;
+    let hit_count_reset_ns: u64 = config.hit_count_reset_secs * 1_000_000_000;
 
     // `must_exist = true`: fail loudly if a symbol is missing (e.g. the C side
     // was renamed) instead of silently ignoring the configured value.
@@ -283,6 +281,7 @@ fn load(
         .set_global("START_PORT", &start_port, true)
         .set_global("END_PORT", &end_port, true)
         .set_global("HIT_COUNT", &hit_count, true)
+        .set_global("HIT_COUNT_RESET_NS", &hit_count_reset_ns, true)
         .load(data)?;
 
     let programm: &mut Xdp = ebpf
@@ -301,23 +300,10 @@ fn load(
         info!("Found map: {}", name);
     }
 
-    let player_connection_map = {
-        let map = ebpf
-            .take_map("player_connection_map")
-            .ok_or_else(|| anyhow::anyhow!("Can't take map 'player_connection_map'"))?;
-        HashMap::<MapData, Ipv4FlowKey, u64>::try_from(map)
-            .context("try to get player_connection_map HashMap")?
-    };
-    let player_connection_map_ref = Arc::new(Mutex::new(player_connection_map));
-
-    let connection_throttle = {
-        let map = ebpf
-            .take_map("connection_throttle")
-            .ok_or_else(|| anyhow::anyhow!("Can't take map 'connection_throttle'"))?;
-        HashMap::<MapData, Ipv4AddrImpl, u32>::try_from(map)
-            .context("try to get connection_throttle HashMap")?
-    };
-    let connection_throttle_ref = Arc::new(Mutex::new(connection_throttle));
+    // All map lifecycle is handled inside the eBPF program: both the
+    // connection throttle and the verified player connections carry a
+    // bpf_timer that recycles or deletes the entry in-kernel, so userspace
+    // never touches those maps.
 
     // Only claim the stats map / run the metrics machinery when enabled in config.
     let stats_ref: Option<Arc<Mutex<PerCpuArray<MapData, Statistics>>>> = if config.prometheus {
@@ -329,20 +315,6 @@ fn load(
     } else {
         None
     };
-
-    let handle1 = spawn_old_connection_clear(
-        "clear-old",
-        running.clone(),
-        condvar.clone(),
-        player_connection_map_ref,
-    )?;
-    let handle2 = spawn_connection_throttle_clear(
-        "clear-throttle",
-        running.clone(),
-        condvar.clone(),
-        connection_throttle_ref,
-        config.hit_count_reset_secs,
-    )?;
 
     let stats_handle = match &stats_ref {
         Some(stats_ref) => {
@@ -363,12 +335,20 @@ fn load(
         None => None,
     };
 
-    let _ = handle1
-        .join()
-        .map_err(|e| anyhow::anyhow!("clear-old thread panicked: {:?}", e))?;
-    let _ = handle2
-        .join()
-        .map_err(|e| anyhow::anyhow!("clear-throttle thread panicked: {:?}", e))?;
+    // Nothing left to manage, just keep the process alive until a
+    // termination signal arrives (the XDP program detaches when the loader
+    // exits).
+    let dummy_mutex = Mutex::new(());
+    let mut guard = dummy_mutex
+        .lock()
+        .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
+    while running.load(Ordering::SeqCst) {
+        guard = condvar
+            .wait(guard)
+            .map_err(|e| anyhow::anyhow!("condvar wait poisoned: {}", e))?;
+    }
+    drop(guard);
+
     if let Some(handle) = stats_handle {
         let _ = handle
             .join()
@@ -451,99 +431,4 @@ fn track_stats(
     Ok(())
 }
 
-fn spawn_connection_throttle_clear(
-    name: &'static str,
-    running: Arc<AtomicBool>,
-    condvar: Arc<Condvar>,
-    connection_throttle_ref: Arc<Mutex<HashMap<MapData, Ipv4AddrImpl, u32>>>,
-    reset_secs: u64,
-) -> Result<thread::JoinHandle<()>, anyhow::Error> {
-    thread::Builder::new()
-        .name(name.into())
-        .spawn(move || {
-            if let Err(e) = connection_throttle_clear(
-                running.clone(),
-                condvar.clone(),
-                connection_throttle_ref,
-                reset_secs,
-            ) {
-                error!("Failed to clear connection throttles: {:?}", e);
-                shutdown(running, condvar);
-            }
-        })
-        .map_err(|e| e.into())
-}
-
-fn connection_throttle_clear(
-    running: Arc<AtomicBool>,
-    condvar: Arc<Condvar>,
-    connection_throttle_ref: Arc<Mutex<HashMap<MapData, Ipv4AddrImpl, u32>>>,
-    reset_secs: u64,
-) -> Result<(), anyhow::Error> {
-    let dummy_mutex = Mutex::new(());
-    while running.load(Ordering::SeqCst) {
-        {
-            let mut throttle = connection_throttle_ref
-                .lock()
-                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
-            mapimpl::clear(&mut throttle)?;
-        }
-        let guard = dummy_mutex
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
-        let _ = condvar
-            .wait_timeout(guard, Duration::from_secs(reset_secs))
-            .map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
-    }
-    Ok(())
-}
-
-fn spawn_old_connection_clear(
-    name: &'static str,
-    running: Arc<AtomicBool>,
-    condvar: Arc<Condvar>,
-    player_connection_map_ref: Arc<Mutex<HashMap<MapData, Ipv4FlowKey, u64>>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error> {
-    thread::Builder::new()
-        .name(name.into())
-        .spawn(move || {
-            if let Err(e) =
-                clear_old_connections(running.clone(), condvar.clone(), player_connection_map_ref)
-            {
-                error!("Failed to clear old connections: {:?}", e);
-                shutdown(running, condvar);
-            }
-        })
-        .map_err(|e| e.into())
-}
-
-fn clear_old_connections(
-    running: Arc<AtomicBool>,
-    condvar: Arc<Condvar>,
-    player_connection_map_ref: Arc<Mutex<HashMap<MapData, Ipv4FlowKey, u64>>>,
-) -> Result<(), anyhow::Error> {
-    let dummy_mutex = Mutex::new(());
-    let mut last_seen: std::collections::HashMap<Ipv4FlowKey, u64> = std::collections::HashMap::new();
-    while running.load(Ordering::SeqCst) {
-        let mut current_snapshot = std::collections::HashMap::new();
-        {
-            let mut players = player_connection_map_ref
-                .lock()
-                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
-            mapimpl::remove_if(&mut players, |key, counter| {
-                let stale = last_seen.get(key).is_some_and(|prev| *prev == *counter);
-                current_snapshot.insert(*key, *counter);
-                stale
-            })?;
-        }
-        last_seen = current_snapshot;
-        let guard = dummy_mutex
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
-        let _ = condvar
-            .wait_timeout(guard, Duration::from_secs(OLD_CONNECTION_TIMEOUT))
-            .map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
-    }
-    Ok(())
-}
 

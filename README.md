@@ -52,7 +52,7 @@ And than just run the executable.
     `metrics_addr` in `config.toml` (see [Configuration](#configuration)), then
     run the loader normally. Metrics are then available at: `http://host:1999/metrics`
 
-**Note:** This project uses a persistent XDP loader. Usage of `XDP` programs requires the userspace program to stay running to manage maps. Stopping the loader will unload the firewall.
+**Note:** This project uses a persistent XDP loader. The userspace program must stay running to keep the filter attached; all map state (throttle windows, verified connections) is managed in-kernel via `bpf_timer`. Stopping the loader will unload the firewall. Requires Linux kernel 5.15 or newer.
 
 ## Configuration
 
@@ -65,7 +65,7 @@ restart the loader. Use `--config <path>` to point at a different file.
 | `start_port`   | int    | 25565   | First port of the inclusive filtered range. |
 | `end_port`     | int    | 25565   | Last port of the inclusive filtered range. |
 | `hit_count`    | int    | 10      | Max SYNs per source IP per throttle window (`0` disables throttling). |
-| `hit_count_reset_secs` | int | 3   | Throttle window length in seconds; how often the SYN counters reset. |
+| `hit_count_reset_secs` | int | 3   | Throttle window length in seconds; each IP's SYN counter resets in-kernel once its window expires. |
 | `online_names` | bool   | true    | Enforce online-mode usernames (≤16 chars). |
 | `prometheus`   | bool   | false   | Collect packet statistics inside the eBPF program. |
 | `metrics_addr` | string | (unset) | Address for the Prometheus HTTP endpoint (requires `prometheus = true`). |

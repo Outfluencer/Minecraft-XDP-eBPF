@@ -58,7 +58,7 @@ static __always_inline __u8 inspect_login_packet(__u8 *reader_index, const __u8 
     // username length
     MAX_VARINT_OR_DIE(varint, reader_index, payload_end, data_end, VARINT_SIZE(ONLINE_NAMES ? 16 : LOGIN_NAME_DATA_MAX));
     // bounce check, invalid username
-    ASSERT_IN_RANGE(varint.value, LOGIN_NAME_DATA_MIN, LOGIN_NAME_DATA_MAX);
+    ASSERT_IN_RANGE(varint.value, LOGIN_NAME_DATA_MIN, ONLINE_NAMES ? 16 : LOGIN_NAME_DATA_MAX);
     // skip the username data
     READ_OR_RETURN(reader_index, varint.value, payload_end, data_end);
 
