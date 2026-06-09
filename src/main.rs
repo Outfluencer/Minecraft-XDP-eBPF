@@ -175,7 +175,7 @@ fn main() {
     }
     setup_logger().expect("Failed to setup logger");
 
-    info!("Loading minecraft xdp filter v2.1 by Outfluencer...");
+    info!("Loading minecraft xdp filter v3 by Outfluencer...");
 
     let running = Arc::new(AtomicBool::new(true));
     let condvar = Arc::new(Condvar::new());
