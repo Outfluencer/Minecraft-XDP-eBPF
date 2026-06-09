@@ -32,9 +32,13 @@ _Static_assert(sizeof(struct statistics) == 64, "statistics size mismatch!");
 /*
  * the compiler will optimize this function well
  */
-#if PROMETHEUS_METRICS
-static __always_inline void count_stats_impl(struct statistics *stats_ptr, const __u32 bitmask, const __u64 amount)
+static __always_inline void count_stats(struct statistics *stats_ptr, const __u32 bitmask, const __u64 amount)
 {
+    if (!PROMETHEUS) // disabled
+    {
+        return;
+    }
+
     if (bitmask & INCOMING_BYTES)
     {
         stats_ptr->incoming_bytes += amount;
@@ -75,10 +79,4 @@ static __always_inline void count_stats_impl(struct statistics *stats_ptr, const
         stats_ptr->tcp_bypass += amount;
     }
 }
-
-#define count_stats(stats_ptr, bitmask, amount) count_stats_impl(stats_ptr, bitmask, amount)
-#else
-#define count_stats(stats_ptr, bitmask, amount)
-#endif
-
 #endif

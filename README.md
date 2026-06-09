@@ -48,19 +48,30 @@ And than just run the executable.
     sudo ./target/release/xdp-loader eth0
     ```
 
-    To enable Prometheus metrics export:
-    ```bash
-    sudo ./target/release/xdp-loader eth0 --metrics-addr 0.0.0.0:1999
-    ```
-    Metrics available at: `http://host:1999/metrics`
+    To enable Prometheus metrics export, set `prometheus = true` and a
+    `metrics_addr` in `config.toml` (see [Configuration](#configuration)), then
+    run the loader normally. Metrics are then available at: `http://host:1999/metrics`
 
 **Note:** This project uses a persistent XDP loader. Usage of `XDP` programs requires the userspace program to stay running to manage maps. Stopping the loader will unload the firewall.
 
 ## Configuration
 
-You can configure ports, features, and throttling behavior in the `build.rs` file.
+Runtime behavior is controlled by a `config.toml` file next to the binary.
+On first run it is created automatically with documented defaults; edit it and
+restart the loader. Use `--config <path>` to point at a different file.
 
-**After changing `build.rs`, you must recompile the project.**
+| Option         | Type   | Default | Description |
+|----------------|--------|---------|-------------|
+| `start_port`   | int    | 25565   | First port of the inclusive filtered range. |
+| `end_port`     | int    | 25565   | Last port of the inclusive filtered range. |
+| `hit_count`    | int    | 10      | Max SYNs per source IP per throttle window (`0` disables throttling). |
+| `hit_count_reset_secs` | int | 3   | Throttle window length in seconds; how often the SYN counters reset. |
+| `online_names` | bool   | true    | Enforce online-mode usernames (≤16 chars). |
+| `prometheus`   | bool   | false   | Collect packet statistics inside the eBPF program. |
+| `metrics_addr` | string | (unset) | Address for the Prometheus HTTP endpoint (requires `prometheus = true`). |
+
+These values are pushed into the eBPF program at load time (via `.rodata`
+globals), so changing them only requires a restart — **not a rebuild**.
 
 ## Troubleshooting
 

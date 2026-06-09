@@ -1,14 +1,3 @@
-#ifndef HIT_COUNT
-#define HIT_COUNT 10
-#endif
-
-#ifndef START_PORT
-#define START_PORT 25565
-#endif
-#ifndef END_PORT
-#define END_PORT 25565
-#endif
-
 #include <stddef.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
@@ -17,19 +6,24 @@
 #include <linux/in.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+// Runtime configuration. The Rust loader overrides these at load time via
+// aya's set_global() (BPF .rodata). They are declared before the project
+// headers below because minecraft_networking.h (ONLINE_NAMES) and stats.h
+// (PROMETHEUS) reference them; the values here are the compiled-in fallback.
+volatile const __u8 PROMETHEUS = 0;
+volatile const __u32 START_PORT = 25565;
+volatile const __u32 END_PORT = 25565;
+volatile const __u32 HIT_COUNT = 10;
+volatile const __u8 ONLINE_NAMES = 1;
+
 #include "common.h"
 #include "minecraft_networking.h"
 #include "stats.h"
 
+
 struct
 {
-    __uint(type,
-#if IP_AND_PORT_PER_CPU
-           BPF_MAP_TYPE_LRU_PERCPU_HASH
-#else
-           BPF_MAP_TYPE_LRU_HASH
-#endif
-    );
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 4096);           // max amount of 4096 concurrent initial connections
     __type(key, struct ipv4_flow_key);   // flow key
     __type(value, struct initial_state); // initial state
@@ -37,13 +31,7 @@ struct
 
 struct
 {
-    __uint(type,
-#if IP_AND_PORT_PER_CPU
-           BPF_MAP_TYPE_PERCPU_HASH
-#else
-           BPF_MAP_TYPE_HASH
-#endif
-    );
+    __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 65535);
     __type(key, struct ipv4_flow_key); // flow key
     __type(value, __u64);              // last seen timestamp
@@ -52,20 +40,13 @@ struct
 
 struct
 {
-    __uint(type,
-#if IP_PER_CPU
-           BPF_MAP_TYPE_PERCPU_HASH
-#else
-           BPF_MAP_TYPE_HASH
-#endif
-    );
+    __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 65535);
     __type(key, __u32);   // ipv4 address
     __type(value, __u32); // throttle hit counter
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } connection_throttle SEC(".maps");
 
-#if PROMETHEUS_METRICS
 struct
 {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -74,7 +55,6 @@ struct
     __type(value, struct statistics);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } stats_map SEC(".maps");
-#endif
 
 static __always_inline __u8 detect_tcp_bypass(const struct tcphdr *tcp)
 {
@@ -114,8 +94,6 @@ static __always_inline __u32 switch_to_verified(const __u64 raw_packet_len, cons
     }
     count_stats(stats_ptr, VERIFIED, 1);
     // for compiler
-    (void)raw_packet_len;
-    (void)stats_ptr;
 
     return XDP_PASS;
 }
@@ -157,17 +135,11 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     // check if TCP destination port matches mc server port
     const __u16 dest_port = bpf_ntohs(tcp->dest);
 
-#if START_PORT == END_PORT
-    if (dest_port != START_PORT)
-    {
-        return XDP_PASS; // not for our service
-    }
-#else
     if (dest_port < START_PORT || dest_port > END_PORT)
     {
         return XDP_PASS; // not for our service
     }
-#endif
+
     if (tcp->doff < 5)
     {
         return XDP_DROP;
@@ -178,18 +150,17 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     {
         return XDP_DROP;
     }
-
-#if PROMETHEUS_METRICS
-    __u32 key = 0;
-    struct statistics *stats_ptr = bpf_map_lookup_elem(&stats_map, &key);
-    if (!stats_ptr)
-    {
-        // this should be impossible
-        return XDP_DROP;
-    }
-#else
     struct statistics *stats_ptr = 0;
-#endif
+    if(PROMETHEUS) {
+        __u32 key = 0;
+        stats_ptr = bpf_map_lookup_elem(&stats_map, &key);
+        if (!stats_ptr)
+        {
+            // this should be impossible
+            return XDP_DROP;
+        }
+    }
+
 
     const __u64 raw_packet_len = (__u64)(data_end - data);
     count_stats(stats_ptr, INCOMING_BYTES, raw_packet_len);
@@ -207,28 +178,27 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     if (tcp->syn)
     {
         count_stats(stats_ptr, SYN_RECEIVE, 1);
+        if(HIT_COUNT) {
+            // connection throttle
+            __u32 *hit_counter = bpf_map_lookup_elem(&connection_throttle, &src_ip);
+            if (hit_counter)
+            {
+                if (*hit_counter >= HIT_COUNT)
+                {
+                    goto drop;
+                }
+                (*hit_counter)++;
+            }
+            else
+            {
+                __u32 new_counter = 1;
+                if (bpf_map_update_elem(&connection_throttle, &src_ip, &new_counter, BPF_NOEXIST) < 0)
+                {
+                    goto drop;
+                }
+            }
+        }
 
-#if CONNECTION_THROTTLE
-        // connection throttle
-        // 10 connection per ip per 3 seconds, otherwise drop
-        __u32 *hit_counter = bpf_map_lookup_elem(&connection_throttle, &src_ip);
-        if (hit_counter)
-        {
-            if (*hit_counter > HIT_COUNT)
-            {
-                goto drop;
-            }
-            (*hit_counter)++;
-        }
-        else
-        {
-            __u32 new_counter = 1;
-            if (bpf_map_update_elem(&connection_throttle, &src_ip, &new_counter, BPF_NOEXIST) < 0)
-            {
-                goto drop;
-            }
-        }
-#endif
         // compute flow key
         const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
         const struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, bpf_ntohl(tcp->seq) + 1);

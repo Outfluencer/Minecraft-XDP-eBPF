@@ -4,11 +4,6 @@
 #include <linux/types.h>
 #include "common.h"
 
-// if you are running a premium server, you can enable this, it drops weird usernames
-#ifndef ONLY_ASCII_NAMES
-#define ONLY_ASCII_NAMES 0
-#endif
-
 // general varint limits
 #define UTF8_MAX_BYTES 3
 #define UUID_LEN 16
@@ -41,7 +36,7 @@
 #define LOGIN_NAME_LEN_MAX MAX_VARINT_BYTES
 
 #define LOGIN_NAME_DATA_MIN (1)                               // empty names are not possible
-#define LOGIN_NAME_DATA_MAX (16 * (ONLY_ASCII_NAMES ? 1 : UTF8_MAX_BYTES))
+#define LOGIN_NAME_DATA_MAX (16 * UTF8_MAX_BYTES)
 
 #define LOGIN_KEY_MIN 0
 #define LOGIN_KEY_MAX 512

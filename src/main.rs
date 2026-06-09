@@ -1,10 +1,9 @@
 use crate::common::Ipv4AddrImpl;
-use crate::mapimpl::XdpMapAbstraction;
 use anyhow::Context;
 use anyhow::Result;
 use aya::{
-    Ebpf, include_bytes_aligned,
-    maps::{HashMap, MapData, PerCpuArray, PerCpuHashMap, PerCpuValues},
+    Ebpf, EbpfLoader, include_bytes_aligned,
+    maps::{HashMap, MapData, PerCpuArray},
     programs::{Xdp, XdpFlags},
 };
 use clap::Parser;
@@ -17,11 +16,10 @@ use log::LevelFilter;
 use log::debug;
 use log::warn;
 use log::{error, info};
-#[cfg(prometheus_metrics)]
 use prometheus::{IntGauge, register_int_gauge};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Signals;
-use std::fmt::Display;
+use std::path::Path;
 use std::{
     env,
     sync::{
@@ -39,25 +37,24 @@ struct Args {
     #[arg(required_unless_present = "license")]
     interface: Option<String>,
 
+    /// Path to the TOML configuration file (created with defaults if missing)
+    #[arg(short, long, default_value = "config.toml")]
+    config: String,
+
     /// Print license information
     #[arg(long, action)]
     license: bool,
-
-    /// Address to bind the metrics server to
-    #[cfg(prometheus_metrics)]
-    #[arg(long)]
-    metrics_addr: Option<String>,
 }
 
 mod common;
+mod config;
 mod mapimpl;
 
+use config::Config;
+
 const OLD_CONNECTION_TIMEOUT: u64 = 60; // every 60 seconds
-const THROTTLE_CLEAR_CYCLE: u64 = 3; // every 3 seconds
-#[cfg(prometheus_metrics)]
 const STATS_TRACKING_CYCLE: u64 = 10; // every 10 seconds
 
-#[cfg(prometheus_metrics)]
 lazy_static! {
     static ref INCOMING_BYTES: IntGauge =
         register_int_gauge!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
@@ -185,19 +182,22 @@ fn main() {
 
     start_shutdown_hook(running.clone(), condvar.clone());
 
-    #[cfg(prometheus_metrics)]
-    if let Some(addr) = args.metrics_addr {
-        start_metrics_server(addr);
-    }
-
     let mut epbf: Option<Ebpf> = None;
     if let Some(interface) = args.interface {
-        match load(&interface, running.clone(), condvar.clone()) {
+        match Config::load(Path::new(&args.config)) {
             Err(e) => {
-                error!("Failed to load BPF program: {}", e);
+                error!("Failed to load config '{}': {:?}", args.config, e);
             }
-            Ok(value) => {
-                epbf = Some(value);
+            Ok(config) => {
+                info!("Loaded configuration: {:?}", config);
+                match load(&interface, &config, running.clone(), condvar.clone()) {
+                    Err(e) => {
+                        error!("Failed to load BPF program: {}", e);
+                    }
+                    Ok(value) => {
+                        epbf = Some(value);
+                    }
+                }
             }
         }
     } else {
@@ -220,7 +220,6 @@ fn start_shutdown_hook(arc: Arc<AtomicBool>, condvar: Arc<Condvar>) {
         }
     });
 }
-#[cfg(prometheus_metrics)]
 fn start_metrics_server(addr: String) {
     thread::spawn(move || {
         let server = match tiny_http::Server::http(&addr) {
@@ -258,13 +257,33 @@ fn start_metrics_server(addr: String) {
 
 fn load(
     interface: &str,
+    config: &Config,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
 ) -> Result<Ebpf, anyhow::Error> {
     let data = include_bytes_aligned!(concat!(env!("CARGO_MANIFEST_DIR"), "/c/minecraft_filter.o"));
     info!("Loaded BPF program (size: {})", data.len());
 
-    let mut ebpf = Ebpf::load(data)?;
+    // Push the runtime configuration into the eBPF program's `volatile const`
+    // globals (.rodata). The Rust types MUST match the C declarations exactly,
+    // since `set_global` patches `size_of::<T>()` bytes at the symbol offset:
+    //   __u8  PROMETHEUS, ONLINE_NAMES
+    //   __u32 START_PORT, END_PORT, HIT_COUNT
+    let prometheus: u8 = config.prometheus as u8;
+    let online_names: u8 = config.online_names as u8;
+    let start_port: u32 = config.start_port as u32;
+    let end_port: u32 = config.end_port as u32;
+    let hit_count: u32 = config.hit_count;
+
+    // `must_exist = true`: fail loudly if a symbol is missing (e.g. the C side
+    // was renamed) instead of silently ignoring the configured value.
+    let mut ebpf = EbpfLoader::new()
+        .set_global("PROMETHEUS", &prometheus, true)
+        .set_global("ONLINE_NAMES", &online_names, true)
+        .set_global("START_PORT", &start_port, true)
+        .set_global("END_PORT", &end_port, true)
+        .set_global("HIT_COUNT", &hit_count, true)
+        .load(data)?;
 
     let programm: &mut Xdp = ebpf
         .program_mut("minecraft_filter")
@@ -286,18 +305,8 @@ fn load(
         let map = ebpf
             .take_map("player_connection_map")
             .ok_or_else(|| anyhow::anyhow!("Can't take map 'player_connection_map'"))?;
-        #[cfg(ip_and_port_per_cpu)]
-        {
-            info!("Using PerCpuHashMap for player_connection_map");
-            PerCpuHashMap::<MapData, Ipv4FlowKey, u64>::try_from(map)
-                .context("try to get player_connection_map PerCpuHashMap")?
-        }
-        #[cfg(not(ip_and_port_per_cpu))]
-        {
-            info!("Using HashMap for player_connection_map");
-            HashMap::<MapData, Ipv4FlowKey, u64>::try_from(map)
-                .context("try to get player_connection_map HashMap")?
-        }
+        HashMap::<MapData, Ipv4FlowKey, u64>::try_from(map)
+            .context("try to get player_connection_map HashMap")?
     };
     let player_connection_map_ref = Arc::new(Mutex::new(player_connection_map));
 
@@ -305,32 +314,21 @@ fn load(
         let map = ebpf
             .take_map("connection_throttle")
             .ok_or_else(|| anyhow::anyhow!("Can't take map 'connection_throttle'"))?;
-
-        #[cfg(ip_per_cpu)]
-        {
-            info!("Using PerCpuHashMap for connection_throttle");
-            PerCpuHashMap::<MapData, Ipv4AddrImpl, u32>::try_from(map)
-                .context("try to get connection_throttle PerCpuHashMap")?
-        }
-        #[cfg(not(ip_per_cpu))]
-        {
-            info!("Using HashMap for connection_throttle");
-            HashMap::<MapData, Ipv4AddrImpl, u32>::try_from(map)
-                .context("try to get connection_throttle HashMap")?
-        }
+        HashMap::<MapData, Ipv4AddrImpl, u32>::try_from(map)
+            .context("try to get connection_throttle HashMap")?
     };
     let connection_throttle_ref = Arc::new(Mutex::new(connection_throttle));
 
-    #[cfg(prometheus_metrics)]
-    let stats = {
+    // Only claim the stats map / run the metrics machinery when enabled in config.
+    let stats_ref: Option<Arc<Mutex<PerCpuArray<MapData, Statistics>>>> = if config.prometheus {
         let map = ebpf
             .take_map("stats_map")
             .ok_or_else(|| anyhow::anyhow!("Can't take map 'stats_map'"))?;
-        PerCpuArray::<MapData, Statistics>::try_from(map)?
+        let stats = PerCpuArray::<MapData, Statistics>::try_from(map)?;
+        Some(Arc::new(Mutex::new(stats)))
+    } else {
+        None
     };
-
-    #[cfg(prometheus_metrics)]
-    let stats_ref: Arc<Mutex<PerCpuArray<MapData, Statistics>>> = Arc::new(Mutex::new(stats));
 
     let handle1 = spawn_old_connection_clear(
         "clear-old",
@@ -343,15 +341,27 @@ fn load(
         running.clone(),
         condvar.clone(),
         connection_throttle_ref,
+        config.hit_count_reset_secs,
     )?;
 
-    #[cfg(prometheus_metrics)]
-    let handle4 = spawn_stats_thread(
-        "track-stats",
-        running.clone(),
-        condvar.clone(),
-        stats_ref.clone(),
-    )?;
+    let stats_handle = match &stats_ref {
+        Some(stats_ref) => {
+            let handle = spawn_stats_thread(
+                "track-stats",
+                running.clone(),
+                condvar.clone(),
+                stats_ref.clone(),
+            )?;
+            match &config.metrics_addr {
+                Some(addr) => start_metrics_server(addr.clone()),
+                None => info!(
+                    "Prometheus stats enabled but no metrics_addr set; HTTP endpoint disabled"
+                ),
+            }
+            Some(handle)
+        }
+        None => None,
+    };
 
     let _ = handle1
         .join()
@@ -359,15 +369,15 @@ fn load(
     let _ = handle2
         .join()
         .map_err(|e| anyhow::anyhow!("clear-throttle thread panicked: {:?}", e))?;
-    #[cfg(prometheus_metrics)]
-    let _ = handle4
-        .join()
-        .map_err(|e| anyhow::anyhow!("track-stats thread panicked: {:?}", e))?;
+    if let Some(handle) = stats_handle {
+        let _ = handle
+            .join()
+            .map_err(|e| anyhow::anyhow!("track-stats thread panicked: {:?}", e))?;
+    }
 
     Ok(ebpf)
 }
 
-#[cfg(prometheus_metrics)]
 fn spawn_stats_thread(
     name: &'static str,
     running: Arc<AtomicBool>,
@@ -385,7 +395,6 @@ fn spawn_stats_thread(
         .map_err(|e| e.into())
 }
 
-#[cfg(prometheus_metrics)]
 fn track_stats(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
@@ -442,21 +451,22 @@ fn track_stats(
     Ok(())
 }
 
-fn spawn_connection_throttle_clear<M, V: Display>(
+fn spawn_connection_throttle_clear(
     name: &'static str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    connection_throttle_ref: Arc<Mutex<M>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error>
-where
-    M: mapimpl::XdpMapAbstraction<Ipv4AddrImpl, V> + Send + 'static,
-{
+    connection_throttle_ref: Arc<Mutex<HashMap<MapData, Ipv4AddrImpl, u32>>>,
+    reset_secs: u64,
+) -> Result<thread::JoinHandle<()>, anyhow::Error> {
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
-            if let Err(e) =
-                connection_throttle_clear(running.clone(), condvar.clone(), connection_throttle_ref)
-            {
+            if let Err(e) = connection_throttle_clear(
+                running.clone(),
+                condvar.clone(),
+                connection_throttle_ref,
+                reset_secs,
+            ) {
                 error!("Failed to clear connection throttles: {:?}", e);
                 shutdown(running, condvar);
             }
@@ -464,39 +474,36 @@ where
         .map_err(|e| e.into())
 }
 
-fn connection_throttle_clear<M, V: Display>(
+fn connection_throttle_clear(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    connection_throttle_ref: Arc<Mutex<M>>,
-) -> Result<(), anyhow::Error>
-where
-    M: XdpMapAbstraction<Ipv4AddrImpl, V> + Send + 'static,
-{
+    connection_throttle_ref: Arc<Mutex<HashMap<MapData, Ipv4AddrImpl, u32>>>,
+    reset_secs: u64,
+) -> Result<(), anyhow::Error> {
     let dummy_mutex = Mutex::new(());
     while running.load(Ordering::SeqCst) {
-        connection_throttle_ref
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
-            .clear()?;
+        {
+            let mut throttle = connection_throttle_ref
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
+            mapimpl::clear(&mut throttle)?;
+        }
         let guard = dummy_mutex
             .lock()
             .map_err(|e| anyhow::anyhow!("Dummy Mutex poisoned: {}", e))?;
         let _ = condvar
-            .wait_timeout(guard, Duration::from_secs(THROTTLE_CLEAR_CYCLE))
+            .wait_timeout(guard, Duration::from_secs(reset_secs))
             .map_err(|e| anyhow::anyhow!("condvar wait_timeout poisoned: {}", e))?;
     }
     Ok(())
 }
 
-fn spawn_old_connection_clear<M>(
+fn spawn_old_connection_clear(
     name: &'static str,
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    player_connection_map_ref: Arc<Mutex<M>>,
-) -> Result<thread::JoinHandle<()>, anyhow::Error>
-where
-    M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static,
-{
+    player_connection_map_ref: Arc<Mutex<HashMap<MapData, Ipv4FlowKey, u64>>>,
+) -> Result<thread::JoinHandle<()>, anyhow::Error> {
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -510,26 +517,25 @@ where
         .map_err(|e| e.into())
 }
 
-fn clear_old_connections<M>(
+fn clear_old_connections(
     running: Arc<AtomicBool>,
     condvar: Arc<Condvar>,
-    player_connection_map_ref: Arc<Mutex<M>>,
-) -> Result<(), anyhow::Error>
-where
-    M: XdpMapAbstraction<Ipv4FlowKey, u64> + Send + 'static,
-{
+    player_connection_map_ref: Arc<Mutex<HashMap<MapData, Ipv4FlowKey, u64>>>,
+) -> Result<(), anyhow::Error> {
     let dummy_mutex = Mutex::new(());
     let mut last_seen: std::collections::HashMap<Ipv4FlowKey, u64> = std::collections::HashMap::new();
     while running.load(Ordering::SeqCst) {
         let mut current_snapshot = std::collections::HashMap::new();
-        player_connection_map_ref
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
-            .remove_if(|key, counter| {
+        {
+            let mut players = player_connection_map_ref
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
+            mapimpl::remove_if(&mut players, |key, counter| {
                 let stale = last_seen.get(key).is_some_and(|prev| *prev == *counter);
                 current_snapshot.insert(*key, *counter);
                 stale
             })?;
+        }
         last_seen = current_snapshot;
         let guard = dummy_mutex
             .lock()
