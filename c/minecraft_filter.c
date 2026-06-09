@@ -187,7 +187,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 {
                     goto drop;
                 }
-                (*hit_counter)++;
+                __sync_fetch_and_add(hit_counter, 1);
             }
             else
             {
