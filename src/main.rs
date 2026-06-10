@@ -14,7 +14,7 @@ use log::LevelFilter;
 use log::debug;
 use log::warn;
 use log::{error, info};
-use prometheus::{IntGauge, register_int_gauge};
+use prometheus::{IntCounter, register_int_counter};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Signals;
 use std::path::Path;
@@ -52,25 +52,25 @@ use config::Config;
 const STATS_TRACKING_CYCLE: u64 = 10; // every 10 seconds
 
 lazy_static! {
-    static ref INCOMING_BYTES: IntGauge =
-        register_int_gauge!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
-    static ref DROPPED_BYTES: IntGauge =
-        register_int_gauge!("minecraft_dropped_bytes", "Total dropped bytes").unwrap();
-    static ref VERIFIED: IntGauge = register_int_gauge!(
+    static ref INCOMING_BYTES: IntCounter =
+        register_int_counter!("minecraft_incoming_bytes", "Total incoming bytes").unwrap();
+    static ref DROPPED_BYTES: IntCounter =
+        register_int_counter!("minecraft_dropped_bytes", "Total dropped bytes").unwrap();
+    static ref VERIFIED: IntCounter = register_int_counter!(
         "minecraft_verified_connections",
         "Total verified connections"
     )
     .unwrap();
-    static ref DROPPED_PACKETS: IntGauge =
-        register_int_gauge!("minecraft_dropped_packets", "Total dropped packets").unwrap();
-    static ref STATE_SWITCHES: IntGauge =
-        register_int_gauge!("minecraft_state_switches", "Total state switches").unwrap();
-    static ref DROP_CONNECTION: IntGauge =
-        register_int_gauge!("minecraft_dropped_connections", "Total dropped connections").unwrap();
-    static ref SYN: IntGauge =
-        register_int_gauge!("minecraft_syn_packets", "Total SYN packets").unwrap();
-    static ref TCP_BYPASS: IntGauge =
-        register_int_gauge!("minecraft_tcp_bypass", "Total TCP bypass attempts").unwrap();
+    static ref DROPPED_PACKETS: IntCounter =
+        register_int_counter!("minecraft_dropped_packets", "Total dropped packets").unwrap();
+    static ref STATE_SWITCHES: IntCounter =
+        register_int_counter!("minecraft_state_switches", "Total state switches").unwrap();
+    static ref DROP_CONNECTION: IntCounter =
+        register_int_counter!("minecraft_dropped_connections", "Total dropped connections").unwrap();
+    static ref SYN: IntCounter =
+        register_int_counter!("minecraft_syn_packets", "Total SYN packets").unwrap();
+    static ref TCP_BYPASS: IntCounter =
+        register_int_counter!("minecraft_tcp_bypass", "Total TCP bypass attempts").unwrap();
 }
 
 fn setup_logger() -> Result<(), anyhow::Error> {
@@ -410,15 +410,19 @@ fn track_stats(
             total.drop_connection,
         );
 
-        // Update Prometheus metrics
-        INCOMING_BYTES.set(total.incoming_bytes as i64);
-        DROPPED_BYTES.set(total.dropped_bytes as i64);
-        VERIFIED.set(total.verified as i64);
-        DROPPED_PACKETS.set(total.dropped_packets as i64);
-        STATE_SWITCHES.set(total.state_switches as i64);
-        DROP_CONNECTION.set(total.drop_connection as i64);
-        SYN.set(total.syn as i64);
-        TCP_BYPASS.set(total.tcp_bypass as i64);
+        // Update Prometheus metrics. The map totals are cumulative for the
+        // lifetime of this process (the unpinned stats map dies with the
+        // loader), so publish the delta since the last cycle to keep proper
+        // counter semantics; on restart both reset together, which Prometheus
+        // handles as a regular counter reset.
+        INCOMING_BYTES.inc_by(total.incoming_bytes.saturating_sub(INCOMING_BYTES.get()));
+        DROPPED_BYTES.inc_by(total.dropped_bytes.saturating_sub(DROPPED_BYTES.get()));
+        VERIFIED.inc_by(total.verified.saturating_sub(VERIFIED.get()));
+        DROPPED_PACKETS.inc_by(total.dropped_packets.saturating_sub(DROPPED_PACKETS.get()));
+        STATE_SWITCHES.inc_by(total.state_switches.saturating_sub(STATE_SWITCHES.get()));
+        DROP_CONNECTION.inc_by(total.drop_connection.saturating_sub(DROP_CONNECTION.get()));
+        SYN.inc_by(total.syn.saturating_sub(SYN.get()));
+        TCP_BYPASS.inc_by(total.tcp_bypass.saturating_sub(TCP_BYPASS.get()));
         drop(stats); // release lock before waiting
 
         let guard = dummy_mutex

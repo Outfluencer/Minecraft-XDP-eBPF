@@ -50,7 +50,6 @@ struct
     __uint(max_entries, 65535);
     __type(key, struct ipv4_flow_key);  // flow key
     __type(value, struct player_entry); // idle timer + packet counter
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } player_connection_map SEC(".maps");
 
 /*
@@ -88,7 +87,6 @@ struct
     __uint(max_entries, 65535);
     __type(key, __u32);                   // ipv4 address
     __type(value, struct throttle_entry); // window timer + hit counter
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } connection_throttle SEC(".maps");
 
 // while connection_throttle is full, only retry inserting after this long
@@ -127,7 +125,6 @@ struct
     __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, struct statistics);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } stats_map SEC(".maps");
 
 static __always_inline __u8 detect_tcp_bypass(const struct tcphdr *tcp)
