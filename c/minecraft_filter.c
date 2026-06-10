@@ -27,7 +27,7 @@ volatile const __u8 ONLINE_NAMES = 1;
 struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, 4096);           // max amount of 4096 concurrent initial connections
+    __uint(max_entries, 16384);          // max amount of 16384 concurrent initial connections
     __type(key, struct ipv4_flow_key);   // flow key
     __type(value, struct initial_state); // initial state
 } conntrack_map SEC(".maps");
@@ -50,7 +50,6 @@ struct
     __uint(max_entries, 65535);
     __type(key, struct ipv4_flow_key);  // flow key
     __type(value, struct player_entry); // idle timer + packet counter
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } player_connection_map SEC(".maps");
 
 /*
@@ -88,7 +87,6 @@ struct
     __uint(max_entries, 65535);
     __type(key, __u32);                   // ipv4 address
     __type(value, struct throttle_entry); // window timer + hit counter
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } connection_throttle SEC(".maps");
 
 // while connection_throttle is full, only retry inserting after this long
@@ -127,13 +125,13 @@ struct
     __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, struct statistics);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } stats_map SEC(".maps");
 
 static __always_inline __u8 detect_tcp_bypass(const struct tcphdr *tcp)
 {
     if ((!tcp->syn && !tcp->ack && !tcp->fin && !tcp->rst) || // no SYN/ACK/FIN/RST flag
         (tcp->syn && tcp->ack) ||                             // SYN+ACK from external (unexpected)
+        (tcp->syn && (tcp->fin || tcp->rst)) ||               // SYN+FIN/SYN+RST never occur legitimately
         tcp->urg)
     { // drop if URG flag is set
         return 1;
@@ -212,6 +210,16 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
+    // drop fragmented tcp packets (MF flag or fragment offset set): non-first
+    // fragments carry no tcp header so the port check below would run on
+    // payload bytes, and after kernel reassembly the backend would receive
+    // data the state machine never inspected. Legitimate tcp does not
+    // fragment, the MSS keeps segments below the MTU
+    if (ip->frag_off & bpf_htons(0x3FFF))
+    {
+        return XDP_DROP;
+    }
+
     const struct tcphdr *tcp = (const void *)ip + (ip->ihl * 4);
     if ((const void *)(tcp + 1) > data_end)
     {
@@ -264,6 +272,13 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     if (tcp->syn)
     {
         count_stats(stats_ptr, SYN_RECEIVE, 1);
+        // drop SYNs carrying payload (e.g. TCP fast open): the data would
+        // reach the backend without ever passing the inspection state machine
+        if (bpf_ntohs(ip->tot_len) > (ip->ihl * 4) + tcp_hdr_len)
+        {
+            count_stats(stats_ptr, TCP_BYPASS, 1);
+            goto drop;
+        }
         if(HIT_COUNT) {
             // connection throttle, fully in kernel: every source ip gets its
             // own window of HIT_COUNT_RESET_NS, opened by its first SYN and
