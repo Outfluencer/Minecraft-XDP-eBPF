@@ -9,7 +9,6 @@ log = "0.4.32"
 signal-hook = "0.4.4"
 anyhow = "1.0.102"
 prometheus = "0.14"
-lazy_static = "1.4"
 tiny_http = "0.12"
 fern = { version = "0.7", features = ["colored"] }
 colored = "3.1"

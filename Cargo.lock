@@ -981,7 +981,6 @@ dependencies = [
  "colored 3.1.1",
  "fern",
  "file-rotate",
- "lazy_static",
  "log",
  "prometheus",
  "serde",

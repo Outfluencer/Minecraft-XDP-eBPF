@@ -42,7 +42,7 @@ prometheus = false
 /// Runtime configuration for the XDP filter.
 ///
 /// The numeric/boolean fields are pushed into the eBPF program's `volatile const`
-/// globals at load time; see `apply` in `main.rs`.
+/// globals at load time; see `load_and_attach` in `src/ebpf.rs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -86,8 +86,9 @@ impl Config {
                 "Config file '{}' not found, writing defaults",
                 path.display()
             );
-            std::fs::write(path, DEFAULT_CONFIG_TOML)
-                .with_context(|| format!("failed to write default config to '{}'", path.display()))?;
+            std::fs::write(path, DEFAULT_CONFIG_TOML).with_context(|| {
+                format!("failed to write default config to '{}'", path.display())
+            })?;
         }
 
         let contents = std::fs::read_to_string(path)
