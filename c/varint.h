@@ -51,7 +51,8 @@ static __always_inline struct varint_value varint(__s32 value, __u32 bytes)
             goto error;                                          \
         barrier_var(ptr);                                        \
         __u8 _b = *(ptr)++;                                      \
-        (result) |= ((__s32)(_b & 0x7F) << (shift));             \
+        /* shift in unsigned: 0x0F << 28 would overflow __s32 */ \
+        (result) |= (__s32)((__u32)(_b & 0x7F) << (shift));      \
         if (!(_b & 0x80))                                        \
             return varint((result), (idx));                      \
     } while (0)

@@ -41,7 +41,15 @@ And then just run the executable.
     ```
     The compiled binary will be at `target/release/xdp-loader`.
 
-2.  **Run the firewall**:
+2.  **Run the tests** (optional):
+    ```bash
+    cargo test
+    ```
+    Besides the Rust unit tests this compiles the eBPF parsing code (VarInt
+    reader, packet inspectors) natively with ASan/UBSan and runs its C unit
+    tests (see `c/tests/protocol_test.c`).
+
+3.  **Run the firewall**:
     ```bash
     sudo ./target/release/xdp-loader <network_interface>
     # Example:
@@ -83,6 +91,7 @@ globals), so changing them only requires a restart — **not a rebuild**.
 | `c/common.h` | Bounds-check macros, flow key, connection states |
 | `c/config.h` | Runtime configuration globals (patched by the loader) |
 | `c/stats.h` | Statistics counters |
+| `c/tests/` | Native unit tests for the parsing code (run via `cargo test`) |
 | `src/main.rs` | CLI entry point and process lifecycle |
 | `src/ebpf.rs` | Loads, configures and attaches the eBPF program |
 | `src/config.rs` | TOML configuration |
