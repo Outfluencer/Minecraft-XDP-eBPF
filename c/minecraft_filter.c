@@ -8,6 +8,14 @@
 #include <linux/errno.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+
+// fragment bits of iphdr->frag_off (kernel-internal net/ip.h, not uapi)
+#ifndef IP_MF
+#define IP_MF 0x2000 // flag: "more fragments"
+#endif
+#ifndef IP_OFFSET
+#define IP_OFFSET 0x1FFF // "fragment offset" part
+#endif
 // Runtime configuration. The Rust loader overrides these at load time via
 // aya's set_global() (BPF .rodata). They are declared before the project
 // headers below because minecraft_networking.h (ONLINE_NAMES) and stats.h
@@ -210,14 +218,18 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-    // drop fragmented tcp packets (MF flag or fragment offset set): non-first
-    // fragments carry no tcp header so the port check below would run on
-    // payload bytes, and after kernel reassembly the backend would receive
-    // data the state machine never inspected. Legitimate tcp does not
-    // fragment, the MSS keeps segments below the MTU
-    if (ip->frag_off & bpf_htons(0x3FFF))
+    // non-first fragments (fragment offset != 0) carry no tcp header, so the
+    // port check below cannot run on them: pass them up the stack so other
+    // services keep receiving their fragmented traffic. Safe for the filtered
+    // range because the matching first fragment is dropped after the port
+    // check, so reassembly never completes and the kernel discards the rest
+    // after the frag timeout. The ports can not be forged via fragment
+    // overlap either: they live in bytes 0-3 of the tcp header while the
+    // smallest non-first offset is 8 bytes, and linux >= 4.19 drops
+    // overlapping fragments outright
+    if (ip->frag_off & bpf_htons(IP_OFFSET))
     {
-        return XDP_DROP;
+        return XDP_PASS;
     }
 
     const struct tcphdr *tcp = (const void *)ip + (ip->ihl * 4);
@@ -232,6 +244,17 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     if (dest_port < START_PORT || dest_port > END_PORT)
     {
         return XDP_PASS; // not for our service
+    }
+
+    // first fragment of a fragmented packet (MF set, offset 0) aimed at our
+    // range: the remaining payload is in fragments the state machine never
+    // sees, so after kernel reassembly the backend would receive uninspected
+    // data. Legitimate tcp does not fragment, the MSS keeps segments below
+    // the MTU. Dropping the first fragment makes reassembly impossible, the
+    // kernel discards the passed non-first fragments after the frag timeout
+    if (ip->frag_off & bpf_htons(IP_MF))
+    {
+        return XDP_DROP;
     }
 
     if (tcp->doff < 5)
