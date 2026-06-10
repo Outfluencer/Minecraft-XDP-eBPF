@@ -1,3 +1,12 @@
+This project is licensed under the BSD-3-Clause license below.
+
+Exception: the BPF program sources in the xdp/ directory are dual-licensed
+under the BSD-3-Clause license below OR the GNU General Public License
+version 2 (GPL-2.0), at your option (SPDX: GPL-2.0 OR BSD-3-Clause). The
+GPL option exists because the program uses GPL-only BPF kernel helpers
+(bpf_timer_*) and the kernel only loads it with a GPL-compatible license
+declaration ("Dual BSD/GPL").
+
 Copyright (c) 2025, Outfluencer
 
 Redistribution and use in source and binary forms, with or without

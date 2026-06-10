@@ -554,4 +554,4 @@ update_state:
 
 // must be GPL-compatible: the bpf_timer_* helpers used by the connection
 // throttle are gpl_only, the kernel refuses to load them otherwise
-char _license[] SEC("license") = "GPL";
+char _license[] SEC("license") = "Dual BSD/GPL";
