@@ -1,3 +1,15 @@
+/*
+ * minecraft_filter - XDP program protecting Minecraft Java Edition servers
+ * against L7 (D)DoS attacks.
+ *
+ * Every TCP packet for the filtered port range runs through a small state
+ * machine that validates the TCP handshake and the first Minecraft packets
+ * of the connection (handshake, then status+ping or login). Connections that
+ * complete the sequence are promoted to a verified fast path and are no
+ * longer inspected; everything else is dropped at the driver level. New
+ * connections are additionally rate limited per source ip. All map cleanup
+ * happens in-kernel via bpf_timer, userspace never has to touch the maps.
+ */
 #include <stddef.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
@@ -9,6 +21,11 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+#include "common.h"
+#include "config.h"
+#include "protocol.h"
+#include "stats.h"
+
 // fragment bits of iphdr->frag_off (kernel-internal net/ip.h, not uapi)
 #ifndef IP_MF
 #define IP_MF 0x2000 // flag: "more fragments"
@@ -16,10 +33,15 @@
 #ifndef IP_OFFSET
 #define IP_OFFSET 0x1FFF // "fragment offset" part
 #endif
-// Runtime configuration. The Rust loader overrides these at load time via
-// aya's set_global() (BPF .rodata). They are declared before the project
-// headers below because minecraft_networking.h (ONLINE_NAMES) and stats.h
-// (PROMETHEUS) reference them; the values here are the compiled-in fallback.
+
+/* ------------------------------------------------------------------------
+ * Runtime configuration
+ *
+ * Declared in config.h, overridden by the Rust loader at load time via
+ * aya's set_global() (BPF .rodata). The values here are the compiled-in
+ * fallback.
+ * --------------------------------------------------------------------- */
+
 volatile const __u8 PROMETHEUS = 0;
 volatile const __u32 START_PORT = 25565;
 volatile const __u32 END_PORT = 25565;
@@ -27,18 +49,23 @@ volatile const __u32 HIT_COUNT = 10;
 volatile const __u64 HIT_COUNT_RESET_NS = 3000000000ULL;
 volatile const __u8 ONLINE_NAMES = 1;
 
-#include "common.h"
-#include "minecraft_networking.h"
-#include "stats.h"
+#define SECOND_TO_NANOS 1000000000ULL
 
+/* ------------------------------------------------------------------------
+ * Connection tracking of unverified connections
+ * --------------------------------------------------------------------- */
 
 struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, 16384);          // max amount of 16384 concurrent initial connections
+    __uint(max_entries, 16384);          // max amount of concurrent initial connections
     __type(key, struct ipv4_flow_key);   // flow key
-    __type(value, struct initial_state); // initial state
+    __type(value, struct initial_state); // inspection state machine data
 } conntrack_map SEC(".maps");
+
+/* ------------------------------------------------------------------------
+ * Verified connections (players)
+ * --------------------------------------------------------------------- */
 
 // idle check interval for verified connections: removal happens after one to
 // two intervals (60 to 120 seconds) without packets
@@ -77,6 +104,10 @@ static __s32 player_connection_idle_check(void *map, struct ipv4_flow_key *key, 
     return 0;
 }
 
+/* ------------------------------------------------------------------------
+ * Per-ip connection throttle
+ * --------------------------------------------------------------------- */
+
 struct throttle_entry
 {
     struct bpf_timer timer; // deletes the entry when the window expires
@@ -93,7 +124,7 @@ struct
     // timers fire and delete the expired windows.
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 65535);
-    __type(key, __u32);                   // ipv4 address
+    __type(key, __u32);                   // ipv4 source address
     __type(value, struct throttle_entry); // window timer + hit counter
 } connection_throttle SEC(".maps");
 
@@ -127,6 +158,10 @@ static __s32 throttle_window_expired(void *map, __u32 *key, struct throttle_entr
     return 0;
 }
 
+/* ------------------------------------------------------------------------
+ * Statistics (only used when PROMETHEUS is enabled, see stats.h)
+ * --------------------------------------------------------------------- */
+
 struct
 {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -135,33 +170,29 @@ struct
     __type(value, struct statistics);
 } stats_map SEC(".maps");
 
+/* ------------------------------------------------------------------------
+ * Helpers
+ * --------------------------------------------------------------------- */
+
+// flag combinations that never occur on legitimate client traffic
 static __always_inline __u8 detect_tcp_bypass(const struct tcphdr *tcp)
 {
-    if ((!tcp->syn && !tcp->ack && !tcp->fin && !tcp->rst) || // no SYN/ACK/FIN/RST flag
-        (tcp->syn && tcp->ack) ||                             // SYN+ACK from external (unexpected)
-        (tcp->syn && (tcp->fin || tcp->rst)) ||               // SYN+FIN/SYN+RST never occur legitimately
-        tcp->urg)
-    { // drop if URG flag is set
+    if ((!tcp->syn && !tcp->ack && !tcp->fin && !tcp->rst) || // none of SYN/ACK/FIN/RST set
+        (tcp->syn && tcp->ack) ||                             // SYN+ACK from outside is never a client
+        (tcp->syn && (tcp->fin || tcp->rst)) ||               // SYN+FIN / SYN+RST are always forged
+        tcp->urg)                                             // URG is unused by the protocol
+    {
         return 1;
     }
     return 0;
 }
 
 /*
- * removes the connection from the conntrack_map
+ * The connection passed the full inspection sequence: move it from the
+ * conntrack map into the player map so its packets skip inspection from now
+ * on, and arm the idle timer that will eventually clean the entry up.
  */
-static __always_inline void remove_connection(const struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
-{
-    count_stats(stats_ptr, DROP_CONNECTION, 1);
-    bpf_map_delete_elem(&conntrack_map, flow_key);
-    (void)stats_ptr; // for compiler
-}
-
-/*
- * removes connection from conntrack map and puts it into the player map
- * no more packets of this connection will be checked now
- */
-static __always_inline __u32 switch_to_verified(const __u64 raw_packet_len, const struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
+static __always_inline __u32 switch_to_verified(const __u64 raw_packet_len, struct statistics *stats_ptr, const struct ipv4_flow_key *flow_key)
 {
     bpf_map_delete_elem(&conntrack_map, flow_key);
     const struct player_entry fresh = {.packets = 1, .last_packets = 0};
@@ -189,6 +220,10 @@ drop:
     count_stats(stats_ptr, DROP_CONNECTION | DROPPED_PACKET, 1);
     return XDP_DROP;
 }
+
+/* ------------------------------------------------------------------------
+ * XDP entry point
+ * --------------------------------------------------------------------- */
 
 SEC("xdp")
 __s32 minecraft_filter(struct xdp_md *ctx)
@@ -238,12 +273,11 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
-    // check if TCP destination port matches mc server port
+    // everything outside the filtered port range is not our business
     const __u16 dest_port = bpf_ntohs(tcp->dest);
-
     if (dest_port < START_PORT || dest_port > END_PORT)
     {
-        return XDP_PASS; // not for our service
+        return XDP_PASS;
     }
 
     // first fragment of a fragmented packet (MF set, offset 0) aimed at our
@@ -267,22 +301,22 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     {
         return XDP_DROP;
     }
-    struct statistics *stats_ptr = 0;
-    if(PROMETHEUS) {
+
+    struct statistics *stats_ptr = NULL;
+    if (PROMETHEUS)
+    {
         __u32 key = 0;
         stats_ptr = bpf_map_lookup_elem(&stats_map, &key);
         if (!stats_ptr)
         {
-            // this should be impossible
+            // per-cpu array index 0 always exists, this is unreachable
             return XDP_DROP;
         }
     }
 
-
     const __u64 raw_packet_len = (__u64)(data_end - data);
     count_stats(stats_ptr, INCOMING_BYTES, raw_packet_len);
 
-    // additional TCP bypass checks for abnormal flags
     if (detect_tcp_bypass(tcp))
     {
         count_stats(stats_ptr, TCP_BYPASS, 1);
@@ -290,11 +324,13 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     }
 
     const __u32 src_ip = ip->saddr;
+    const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
 
-    // stateless new connection checks
+    // new connection: throttle it, then start tracking it
     if (tcp->syn)
     {
         count_stats(stats_ptr, SYN_RECEIVE, 1);
+
         // drop SYNs carrying payload (e.g. TCP fast open): the data would
         // reach the backend without ever passing the inspection state machine
         if (bpf_ntohs(ip->tot_len) > (ip->ihl * 4) + tcp_hdr_len)
@@ -302,7 +338,9 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             count_stats(stats_ptr, TCP_BYPASS, 1);
             goto drop;
         }
-        if(HIT_COUNT) {
+
+        if (HIT_COUNT)
+        {
             // connection throttle, fully in kernel: every source ip gets its
             // own window of HIT_COUNT_RESET_NS, opened by its first SYN and
             // closed by the bpf_timer that deletes the entry again
@@ -321,7 +359,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
                 __u64 *backoff = bpf_map_lookup_elem(&throttle_insert_backoff, &zero);
                 if (!backoff)
                 {
-                    // this should be impossible
+                    // per-cpu array index 0 always exists, this is unreachable
                     goto drop;
                 }
                 const __u64 now = bpf_ktime_get_ns();
@@ -358,8 +396,8 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             }
         }
 
-        // compute flow key
-        const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
+        // track the connection: the next packet has to be the ACK finishing
+        // the TCP handshake, with the sequence number following this SYN
         const struct initial_state new_state = gen_initial_state(AWAIT_ACK, 0, bpf_ntohl(tcp->seq) + 1);
         if (bpf_map_update_elem(&conntrack_map, &flow_key, &new_state, BPF_ANY) < 0)
         {
@@ -369,8 +407,7 @@ __s32 minecraft_filter(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-    // compute flow key
-    const struct ipv4_flow_key flow_key = gen_ipv4_flow_key(src_ip, ip->daddr, tcp->source, tcp->dest);
+    // verified connections skip all further inspection
     struct player_entry *player = bpf_map_lookup_elem(&player_connection_map, &flow_key);
     if (player)
     {
@@ -386,20 +423,18 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     struct initial_state *initial_state = bpf_map_lookup_elem(&conntrack_map, &flow_key);
     if (!initial_state)
     {
-        goto drop; // no connection tracked, drop
+        goto drop; // neither tracked nor verified
     }
 
-    __u8 *tcp_payload = (__u8 *)((__u8 *)tcp + tcp_hdr_len);
+    const __u8 *tcp_payload = (const __u8 *)tcp + tcp_hdr_len;
 
-    // total length of ip packet
+    // ip total length - ip header - tcp header = length of the tcp payload
     const __u16 ip_tot_len = bpf_ntohs(ip->tot_len);
-    // total ip - ip header - tcp header = length of tcp payload
     const __u16 tcp_payload_len = ip_tot_len - (ip->ihl * 4) - tcp_hdr_len;
-    // tcp payload end = start + length
     const __u8 *tcp_payload_end = tcp_payload + tcp_payload_len;
 
-    // tcp packet is split in multiple ethernet frames, we don't support that
-    if (tcp_payload_end > (__u8 *)data_end)
+    // tcp packet split over multiple ethernet frames, we don't support that
+    if (tcp_payload_end > (const __u8 *)data_end)
     {
         goto drop;
     }
@@ -407,39 +442,40 @@ __s32 minecraft_filter(struct xdp_md *ctx)
     __u32 state = initial_state->state;
     if (state == AWAIT_ACK)
     {
-        // not an ack or invalid ack number
+        // not an ack, or not the ack matching our SYN
         if (!tcp->ack || initial_state->expected_sequence != bpf_ntohl(tcp->seq))
         {
             goto drop;
         }
 
-        // set state here even tho we may retrun as we need the state for the next packet
+        // advance the state machine before the early drop below, the next
+        // packet has to be matched against AWAIT_MC_HANDSHAKE
         initial_state->state = state = AWAIT_MC_HANDSHAKE;
 
-        // we can drop original pure ack from the tcp 3 way handshake
-        // the backend will accept the first minecraft data packet as the ack of the 3 way handshake
-        // that's an elegant way to only let the backend accept connections that have a mc handshake in it.
-        // Only drop if there is no TCP payload; if there is payload, continue into payload inspection.
+        // the empty ack finishing the TCP handshake is dropped on purpose:
+        // the backend will accept the first minecraft data packet as that
+        // ack, which elegantly limits backend connections to clients whose
+        // handshake passed inspection. If the ack already carries payload,
+        // fall through into payload inspection instead
         if (tcp_payload >= tcp_payload_end)
         {
             goto drop;
         }
-
-        // do not return here, the ack of the tcp handshake can contain application data
-        // return XDP_PASS;
     }
 
     if (tcp_payload < tcp_payload_end)
     {
-
+        // payload without an ack flag is never legitimate mid-handshake
         if (!tcp->ack)
         {
             goto drop_connection;
         }
 
-        // we fully track the tcp packet order with this check,
-        // this mean we can hard punish invalid packets below, as they are not out of order
-        // but invalid data
+        // we fully track the tcp sequence, so a mismatch here is either a
+        // retransmission or an out-of-order packet: drop the packet, and
+        // drop the whole connection once that happens too often. Everything
+        // that survives this check is exactly the in-order byte stream the
+        // backend would see, which is what allows the hard punishments below
         if (initial_state->expected_sequence != bpf_ntohl(tcp->seq))
         {
             if (++initial_state->fails > MAX_OUT_OF_ORDER)
@@ -451,18 +487,16 @@ __s32 minecraft_filter(struct xdp_md *ctx)
 
         if (state == AWAIT_MC_HANDSHAKE)
         {
-            // returns the next state
-            // if the login data or motd request is included in the same tcp data as the handshake
-            // the tcp_payload reader index will be updated to the next position
-            __s32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, &initial_state->protocol, data_end, &tcp_payload);
-            // if the first packet has invalid length, we can block it
-            // even with retransmission this len should always be valid‚
+            // if the status request or login packet is in the same tcp
+            // segment as the handshake, inspect_handshake returns a
+            // DIRECT_READ_* state and advances tcp_payload to the rest
+            const __s32 next_state = inspect_handshake(tcp_payload, tcp_payload_end, data_end, &initial_state->protocol, &tcp_payload);
             if (!next_state)
             {
+                // even with retransmissions the handshake of a legitimate
+                // client is always parseable, this connection is bogus
                 goto drop;
             }
-
-            // fully drop legacy ping
             if (next_state == RECEIVED_LEGACY_PING)
             {
                 goto drop_connection;
@@ -479,7 +513,8 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             goto update_state;
         }
         if (state == AWAIT_STATUS_REQUEST)
-        read_status: {
+        read_status:
+        {
             if (!inspect_status_request(tcp_payload, tcp_payload_end, data_end))
             {
                 goto drop;
@@ -497,31 +532,37 @@ __s32 minecraft_filter(struct xdp_md *ctx)
             goto update_state;
         }
         if (state == AWAIT_LOGIN)
-        read_login: {
-        
-            if (!inspect_login_packet(tcp_payload, tcp_payload_end, initial_state->protocol, data_end))
+        read_login:
+        {
+            if (!inspect_login_packet(tcp_payload, tcp_payload_end, data_end, initial_state->protocol))
             {
                 goto drop;
             }
-            // as tracking ends here we do not need to update the sequence
-            // initial_state->expected_sequence += tcp_payload_len;
-            goto switch_to_verified;
+            // tracking ends here, no need to update the expected sequence
+            return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
         }
         if (state == PING_COMPLETE)
         {
+            // a finished ping flow has nothing more to say
             goto drop_connection;
         }
-    } else if (state == AWAIT_MC_HANDSHAKE) {
-        // no ack's are allowed, we are waiting for the handshake
-        // otherwise an attacker could bypass the 3 way handshake hack
-        goto drop; 
     }
+    else if (state == AWAIT_MC_HANDSHAKE)
+    {
+        // empty acks are not allowed while the handshake is pending,
+        // otherwise an attacker could sit on a half-inspected connection
+        goto drop;
+    }
+
+    // empty segments in the remaining states (pure acks, FIN/RST teardown)
     return XDP_PASS;
 
-// Using this labels drastically reduce the file size
+// shared exit paths: jumping here instead of duplicating these blocks keeps
+// the generated program drastically smaller
 drop_connection:
-    remove_connection(stats_ptr, &flow_key);
-    goto drop;
+    count_stats(stats_ptr, DROP_CONNECTION, 1);
+    bpf_map_delete_elem(&conntrack_map, &flow_key);
+    // fall through
 drop:
     count_stats(stats_ptr, DROPPED_PACKET, 1);
     count_stats(stats_ptr, DROPPED_BYTES, raw_packet_len);
@@ -530,8 +571,6 @@ update_state:
     initial_state->expected_sequence += tcp_payload_len;
     count_stats(stats_ptr, STATE_SWITCH, 1);
     return XDP_PASS;
-switch_to_verified:
-    return switch_to_verified(raw_packet_len, stats_ptr, &flow_key);
 }
 
 // must be GPL-compatible: the bpf_timer_* helpers used by the connection
