@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-/// Compiles `c/tests/protocol_test.c` natively and runs it.
+/// Compiles `xdp/tests/protocol_test.c` natively and runs it.
 ///
 /// This exercises the exact parsing code the eBPF program is built from
 /// (varint reader, packet inspectors, bounds-check macros) in userspace,
@@ -27,7 +27,7 @@ fn c_parser_unit_tests() {
         "-O2",
         "-g",
         "-fno-strict-aliasing",
-        "c/tests/protocol_test.c",
+        "xdp/tests/protocol_test.c",
         "-o",
         binary,
     ];

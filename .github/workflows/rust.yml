@@ -44,4 +44,4 @@ jobs:
       with:
         archive: false
         name: minecraft_filter.o
-        path: ./c/minecraft_filter.o
+        path: ./xdp/minecraft_filter.o

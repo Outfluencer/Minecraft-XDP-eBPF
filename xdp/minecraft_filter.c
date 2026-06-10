@@ -35,30 +35,13 @@
 #endif
 
 /* ------------------------------------------------------------------------
- * Runtime configuration
- *
- * Declared in config.h, overridden by the Rust loader at load time via
- * aya's set_global() (BPF .rodata). The values here are the compiled-in
- * fallback.
- * --------------------------------------------------------------------- */
-
-volatile const __u8 PROMETHEUS = 0;
-volatile const __u32 START_PORT = 25565;
-volatile const __u32 END_PORT = 25565;
-volatile const __u32 HIT_COUNT = 10;
-volatile const __u64 HIT_COUNT_RESET_NS = 3000000000ULL;
-volatile const __u8 ONLINE_NAMES = 1;
-
-#define SECOND_TO_NANOS 1000000000ULL
-
-/* ------------------------------------------------------------------------
  * Connection tracking of unverified connections
  * --------------------------------------------------------------------- */
 
 struct
 {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, 16384);          // max amount of concurrent initial connections
+    __uint(max_entries, 16384);          // placeholder, set by the loader ([xdp] max_pending_connections)
     __type(key, struct ipv4_flow_key);   // flow key
     __type(value, struct initial_state); // inspection state machine data
 } conntrack_map SEC(".maps");
@@ -66,10 +49,6 @@ struct
 /* ------------------------------------------------------------------------
  * Verified connections (players)
  * --------------------------------------------------------------------- */
-
-// idle check interval for verified connections: removal happens after one to
-// two intervals (60 to 120 seconds) without packets
-#define PLAYER_IDLE_NS (60ULL * SECOND_TO_NANOS)
 
 struct player_entry
 {
@@ -82,7 +61,7 @@ _Static_assert(sizeof(struct player_entry) == 32, "player_entry size mismatch!")
 struct
 {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 65535);
+    __uint(max_entries, 65535);         // placeholder, set by the loader ([xdp] max_player_connections)
     __type(key, struct ipv4_flow_key);  // flow key
     __type(value, struct player_entry); // idle timer + packet counter
 } player_connection_map SEC(".maps");
@@ -123,7 +102,7 @@ struct
     // connections keep passing. Capacity recovers in-kernel as the per-entry
     // timers fire and delete the expired windows.
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 65535);
+    __uint(max_entries, 65535);           // placeholder, set by the loader ([xdp] max_throttled_ips)
     __type(key, __u32);                   // ipv4 source address
     __type(value, struct throttle_entry); // window timer + hit counter
 } connection_throttle SEC(".maps");

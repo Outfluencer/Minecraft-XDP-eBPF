@@ -1,17 +1,17 @@
 use std::process::Command;
 
-/// Compiles the eBPF program to `c/minecraft_filter.o`, which `src/ebpf.rs`
+/// Compiles the eBPF program to `xdp/minecraft_filter.o`, which `loader/ebpf.rs`
 /// embeds into the loader binary at compile time.
 fn main() {
-    // explicit file list on purpose: watching the whole c/ directory would
+    // explicit file list on purpose: watching the whole xdp/ directory would
     // also watch the generated .o and recompile on every build
     for source in [
-        "c/minecraft_filter.c",
-        "c/common.h",
-        "c/config.h",
-        "c/protocol.h",
-        "c/stats.h",
-        "c/varint.h",
+        "xdp/minecraft_filter.c",
+        "xdp/common.h",
+        "xdp/config.h",
+        "xdp/protocol.h",
+        "xdp/stats.h",
+        "xdp/varint.h",
     ] {
         println!("cargo:rerun-if-changed={source}");
     }
@@ -31,7 +31,7 @@ fn main() {
             "-o",
             "minecraft_filter.o",
         ])
-        .current_dir("c")
+        .current_dir("xdp")
         .output()
         .expect("failed to run clang, is LLVM/clang installed?");
 

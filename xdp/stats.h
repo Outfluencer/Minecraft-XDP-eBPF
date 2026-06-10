@@ -18,7 +18,7 @@ enum stats_mask {
     DROPPED_BYTES   = 1u << 7,
 };
 
-// one per-cpu slot of stats_map; must match `Statistics` in src/metrics.rs
+// one per-cpu slot of stats_map; must match `Statistics` in loader/metrics.rs
 struct statistics
 {
     __u64 verified;

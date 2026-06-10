@@ -11,10 +11,7 @@ use prometheus::{Encoder, IntCounter, TextEncoder, register_int_counter};
 use crate::config::Config;
 use crate::shutdown::Shutdown;
 
-/// How often the stats map is read and published.
-const POLL_INTERVAL: Duration = Duration::from_secs(10);
-
-/// Defines the userspace mirror of `struct statistics` (see c/stats.h)
+/// Defines the userspace mirror of `struct statistics` (see xdp/stats.h)
 /// together with one Prometheus counter per field, so the struct layout, the
 /// per-cpu summing and the published metrics all stay in sync from a single
 /// field list. Field order and types must match the C struct exactly.
@@ -70,7 +67,7 @@ statistics! {
     dropped_bytes   => "minecraft_dropped_bytes", "Total dropped bytes";
 }
 
-// compile-time layout check, mirrors the _Static_assert in c/stats.h
+// compile-time layout check, mirrors the _Static_assert in xdp/stats.h
 const _: () = assert!(std::mem::size_of::<Statistics>() == 64);
 
 static COUNTERS: LazyLock<Counters> = LazyLock::new(Counters::new);
@@ -83,7 +80,7 @@ pub fn start(
     config: &Config,
     shutdown: &Arc<Shutdown>,
 ) -> Result<Option<JoinHandle<()>>> {
-    if !config.prometheus {
+    if !config.metrics.enabled {
         return Ok(None);
     }
 
@@ -92,21 +89,26 @@ pub fn start(
         .context("can't take map 'stats_map'")?;
     let stats = PerCpuArray::try_from(map)?;
 
-    match &config.metrics_addr {
+    match &config.metrics.addr {
         Some(addr) => serve_http(addr.clone()),
-        None => info!("Prometheus stats enabled but no metrics_addr set; HTTP endpoint disabled"),
+        None => info!("Metrics collection enabled but no addr set; HTTP endpoint disabled"),
     }
 
+    let poll_interval = Duration::from_secs(config.metrics.poll_secs);
     let shutdown = shutdown.clone();
     let handle = thread::Builder::new()
         .name("track-stats".into())
-        .spawn(move || poll_loop(stats, shutdown))?;
+        .spawn(move || poll_loop(stats, shutdown, poll_interval))?;
     Ok(Some(handle))
 }
 
 /// Sums the per-cpu slices of the stats map and publishes the totals every
-/// [`POLL_INTERVAL`] until shutdown (or a map read error) ends the loop.
-fn poll_loop(stats: PerCpuArray<MapData, Statistics>, shutdown: Arc<Shutdown>) {
+/// `poll_interval` until shutdown (or a map read error) ends the loop.
+fn poll_loop(
+    stats: PerCpuArray<MapData, Statistics>,
+    shutdown: Arc<Shutdown>,
+    poll_interval: Duration,
+) {
     loop {
         match stats.get(&0, 0) {
             Ok(per_cpu) => {
@@ -123,7 +125,7 @@ fn poll_loop(stats: PerCpuArray<MapData, Statistics>, shutdown: Arc<Shutdown>) {
                 return;
             }
         }
-        if !shutdown.sleep(POLL_INTERVAL) {
+        if !shutdown.sleep(poll_interval) {
             return;
         }
     }

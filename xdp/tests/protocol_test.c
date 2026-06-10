@@ -18,8 +18,8 @@
 #endif
 
 /*
- * Stand-in for c/config.h, suppressed via its include guard: the real header
- * declares the knobs `volatile const`, but the login tests need to flip
+ * Stand-in for xdp/config.h, suppressed via its include guard: the real header
+ * defines the knobs `volatile const`, but the login tests need to flip
  * ONLINE_NAMES at runtime.
  */
 #define CONFIG_H

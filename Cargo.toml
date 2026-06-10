@@ -3,23 +3,30 @@ name = "xdp-loader"
 version = "0.1.0"
 edition = "2024"
 
+# userspace loader lives in loader/ instead of the default src/
+[[bin]]
+name = "xdp-loader"
+path = "loader/main.rs"
+
 [dependencies]
 aya = "0.13.1"
 log = "0.4.32"
 signal-hook = "0.4.4"
 anyhow = "1.0.102"
-prometheus = "0.14"
+# only the text encoder is used, default features would pull in protobuf
+prometheus = { version = "0.14", default-features = false }
 tiny_http = "0.12"
 fern = { version = "0.7", features = ["colored"] }
 colored = "3.1"
 chrono = "0.4"
 file-rotate = "0.8"
-clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 
 [profile.release]
-opt-level = 3
+# the packet hot path lives in the kernel; the loader itself is not
+# performance sensitive, so optimize it for size
+opt-level = "z"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
