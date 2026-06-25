@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-aya = "0.13.1"
+aya = "0.14.0"
 log = "0.4.32"
 signal-hook = "0.4.4"
 anyhow = "1.0.102"
