@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use aya::programs::{Xdp, XdpFlags};
+use aya::programs::{Xdp, XdpMode};
 use aya::{Ebpf, EbpfLoader, include_bytes_aligned};
 use log::info;
 
-use crate::config::{Config, XdpMode};
+use crate::config::{Config, ConfigXdpMode};
 
 /// Loads the embedded eBPF object, applies the runtime configuration and
 /// attaches the XDP program to `interface`.
@@ -33,20 +33,20 @@ pub fn load_and_attach(interface: &str, config: &Config) -> Result<Ebpf> {
     let player_idle_ns: u64 = filter.player_idle_timeout_secs * 1_000_000_000;
 
     let mut ebpf = EbpfLoader::new()
-        .set_global("PROMETHEUS", &prometheus, true)
-        .set_global("ONLINE_NAMES", &online_names, true)
-        .set_global("START_PORT", &start_port, true)
-        .set_global("END_PORT", &end_port, true)
-        .set_global("HIT_COUNT", &hit_count, true)
-        .set_global("HIT_COUNT_RESET_NS", &hit_count_reset_ns, true)
-        .set_global("PLAYER_IDLE_NS", &player_idle_ns, true)
+        .override_global("PROMETHEUS", &prometheus, true)
+        .override_global("ONLINE_NAMES", &online_names, true)
+        .override_global("START_PORT", &start_port, true)
+        .override_global("END_PORT", &end_port, true)
+        .override_global("HIT_COUNT", &hit_count, true)
+        .override_global("HIT_COUNT_RESET_NS", &hit_count_reset_ns, true)
+        .override_global("PLAYER_IDLE_NS", &player_idle_ns, true)
         // Replace the placeholder map capacities baked into the object with
         // the configured ones. The names must match the map definitions in
         // xdp/minecraft_filter.c; unlike set_global() there is no must_exist
         // flag, a mismatched name would be silently ignored.
-        .set_max_entries("conntrack_map", config.xdp.max_pending_connections)
-        .set_max_entries("player_connection_map", config.xdp.max_player_connections)
-        .set_max_entries("connection_throttle", config.xdp.max_throttled_ips)
+        .map_max_entries("conntrack_map", config.xdp.max_pending_connections)
+        .map_max_entries("player_connection_map", config.xdp.max_player_connections)
+        .map_max_entries("connection_throttle", config.xdp.max_throttled_ips)
         .load(object)
         .context("failed to load BPF program")?;
 
@@ -59,30 +59,30 @@ pub fn load_and_attach(interface: &str, config: &Config) -> Result<Ebpf> {
     // Auto does its own driver -> skb fallback instead of leaving the choice
     // to the kernel, so the mode that is actually active can be logged.
     let (link, mode) = match config.xdp.mode {
-        XdpMode::Auto => match program.attach(interface, XdpFlags::DRV_MODE) {
-            Ok(link) => (link, XdpMode::Driver),
+        ConfigXdpMode::Auto => match program.attach(interface, XdpMode::Driver) {
+            Ok(link) => (link, ConfigXdpMode::Driver),
             Err(err) => {
                 info!("'{interface}' does not support native XDP ({err}), using generic skb mode");
                 let link = program
-                    .attach(interface, XdpFlags::SKB_MODE)
+                    .attach(interface, aya::programs::XdpMode::Skb)
                     .with_context(|| format!("failed to attach to interface '{interface}'"))?;
-                (link, XdpMode::Skb)
+                (link, ConfigXdpMode::Skb)
             }
         },
-        XdpMode::Driver => {
-            let link = program.attach(interface, XdpFlags::DRV_MODE).with_context(|| {
+        ConfigXdpMode::Driver => {
+            let link = program.attach(interface, XdpMode::Driver).with_context(|| {
                 format!(
                     "failed to attach to interface '{interface}' in native driver mode \
                      (the NIC driver may not support XDP; try mode = \"skb\")"
                 )
             })?;
-            (link, XdpMode::Driver)
+            (link, ConfigXdpMode::Driver)
         }
-        XdpMode::Skb => {
+        ConfigXdpMode::Skb => {
             let link = program
-                .attach(interface, XdpFlags::SKB_MODE)
+                .attach(interface, XdpMode::Skb)
                 .with_context(|| format!("failed to attach to interface '{interface}' in skb mode"))?;
-            (link, XdpMode::Skb)
+            (link, ConfigXdpMode::Skb)
         }
     };
     info!("BPF program attached to interface {interface} in {mode} mode ({link:?})");

@@ -143,7 +143,7 @@ impl Default for FilterConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct XdpConfig {
     /// XDP attach mode.
-    pub mode: XdpMode,
+    pub mode: ConfigXdpMode,
     /// Capacity of `conntrack_map`: concurrent unverified (mid-handshake)
     /// connections, oldest evicted when full.
     pub max_pending_connections: u32,
@@ -157,7 +157,7 @@ pub struct XdpConfig {
 impl Default for XdpConfig {
     fn default() -> Self {
         Self {
-            mode: XdpMode::Auto,
+            mode: ConfigXdpMode::Auto,
             max_pending_connections: 16384,
             max_player_connections: 65535,
             max_throttled_ips: 65535,
@@ -168,7 +168,7 @@ impl Default for XdpConfig {
 /// XDP attach mode, the `mode` option in `[xdp]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum XdpMode {
+pub enum ConfigXdpMode {
     /// Native driver mode when the NIC supports it, automatic fallback to
     /// generic mode otherwise.
     Auto,
@@ -178,12 +178,12 @@ pub enum XdpMode {
     Skb,
 }
 
-impl fmt::Display for XdpMode {
+impl fmt::Display for ConfigXdpMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            XdpMode::Auto => "auto",
-            XdpMode::Driver => "driver",
-            XdpMode::Skb => "skb",
+            ConfigXdpMode::Auto => "auto",
+            ConfigXdpMode::Driver => "driver",
+            ConfigXdpMode::Skb => "skb",
         })
     }
 }
@@ -388,7 +388,7 @@ mod tests {
         assert_eq!(cfg.filter.hit_count, 0); // throttle disabled
         assert!(cfg.metrics.enabled);
         assert_eq!(cfg.filter.start_port, 25565); // default preserved
-        assert_eq!(cfg.xdp.mode, XdpMode::Auto); // untouched section defaulted
+        assert_eq!(cfg.xdp.mode, ConfigXdpMode::Auto); // untouched section defaulted
     }
 
     #[test]
