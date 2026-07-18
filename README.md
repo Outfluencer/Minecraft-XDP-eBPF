@@ -112,28 +112,7 @@ restart the loader. Use `--config <path>` to point at a different file.
 
 The `[filter]` values and map capacities are pushed into the eBPF program at
 load time (via `.rodata` globals and map definitions), so changing them only
-requires a restart — **not a rebuild**.
-
-## Project Layout
-
-| Path | Purpose |
-|------|---------|
-| `xdp/minecraft_filter.c` | XDP entry point, BPF maps, conntrack state machine |
-| `xdp/protocol.h` | Minecraft packet inspection (handshake, status, ping, login) |
-| `xdp/varint.h` | Bounded VarInt reader |
-| `xdp/common.h` | Bounds-check macros, flow key, connection states |
-| `xdp/config.h` | Runtime configuration globals (patched by the loader) |
-| `xdp/stats.h` | Statistics counters |
-| `xdp/tests/` | Native unit tests for the parsing code (run via `cargo test`) |
-| `loader/main.rs` | CLI entry point and process lifecycle |
-| `loader/ebpf.rs` | Loads, configures and attaches the eBPF program |
-| `loader/config.rs` | TOML configuration |
-| `loader/metrics.rs` | Statistics polling and Prometheus endpoint |
-| `loader/logging.rs` | Console + rotating file logging |
-| `loader/shutdown.rs` | Signal handling and shutdown coordination |
-
-The eBPF program is compiled by `build.rs` and embedded into the loader
-binary, so the released executable is fully self-contained.
+requires a restart — **not a rebuild**.  
 
 ## Troubleshooting
 
