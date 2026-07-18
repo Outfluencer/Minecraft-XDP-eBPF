@@ -15,10 +15,12 @@ The default filtered port is 25565.
 
 ## Installation (Linux)
 
-### Generate your filter binary
+### Download from releases
 
-Generate here: https://xdp.outfluencer.dev/   
-And then just run the executable.   
+https://github.com/Outfluencer/Minecraft-XDP-eBPF/releases
+
+You can download the latest build from the Releases Tab  
+Then just run the executable in sudo mode or via root
 
 ### Prerequisites
 - Rust toolchain (stable)
