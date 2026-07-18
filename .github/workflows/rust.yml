@@ -1,7 +1,7 @@
 name: Rust
 on:
-  push:
-    branches: [ "main" ]
+  # releases (incl. tests + build) for main are handled by release.yml;
+  # this workflow is the CI signal for pull requests
   pull_request:
     branches: [ "main" ]
 permissions:

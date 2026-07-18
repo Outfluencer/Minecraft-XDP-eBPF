@@ -99,7 +99,10 @@ fn main() {
     };
 
     logging::init(&config.logging).expect("Failed to setup logger");
-    info!("Loading minecraft xdp filter v3 by Outfluencer...");
+    info!(
+        "Loading minecraft xdp filter v{} by Outfluencer...",
+        env!("CARGO_PKG_VERSION")
+    );
     info!("Loaded configuration: {config:?}");
 
     let shutdown = Arc::new(Shutdown::new());
