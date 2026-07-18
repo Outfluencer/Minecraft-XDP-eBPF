@@ -15,6 +15,9 @@ target/
 *.tmp
 *.swp
 
+# Generated at runtime on first launch
+config.toml
+
 # System files
 .DS_Store
 Thumbs.db
