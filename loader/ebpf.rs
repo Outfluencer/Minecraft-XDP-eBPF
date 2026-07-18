@@ -13,8 +13,10 @@ use crate::config::{Config, ConfigXdpMode};
 /// (throttle windows, idle player connections) happens in-kernel via
 /// `bpf_timer`.
 pub fn load_and_attach(interface: &str, config: &Config) -> Result<Ebpf> {
-    let object =
-        include_bytes_aligned!(concat!(env!("CARGO_MANIFEST_DIR"), "/xdp/minecraft_filter.o"));
+    let object = include_bytes_aligned!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/xdp/minecraft_filter.o"
+    ));
     info!("Loaded BPF object ({} bytes)", object.len());
 
     // Push the runtime configuration into the program's `volatile const`
@@ -70,18 +72,20 @@ pub fn load_and_attach(interface: &str, config: &Config) -> Result<Ebpf> {
             }
         },
         ConfigXdpMode::Driver => {
-            let link = program.attach(interface, XdpMode::Driver).with_context(|| {
-                format!(
-                    "failed to attach to interface '{interface}' in native driver mode \
+            let link = program
+                .attach(interface, XdpMode::Driver)
+                .with_context(|| {
+                    format!(
+                        "failed to attach to interface '{interface}' in native driver mode \
                      (the NIC driver may not support XDP; try mode = \"skb\")"
-                )
-            })?;
+                    )
+                })?;
             (link, ConfigXdpMode::Driver)
         }
         ConfigXdpMode::Skb => {
-            let link = program
-                .attach(interface, XdpMode::Skb)
-                .with_context(|| format!("failed to attach to interface '{interface}' in skb mode"))?;
+            let link = program.attach(interface, XdpMode::Skb).with_context(|| {
+                format!("failed to attach to interface '{interface}' in skb mode")
+            })?;
             (link, ConfigXdpMode::Skb)
         }
     };

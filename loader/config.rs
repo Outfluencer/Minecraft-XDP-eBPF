@@ -72,7 +72,9 @@ enabled = false
 
 # Address to expose Prometheus metrics on (only used when enabled = true).
 # Leave commented out to collect stats without starting the HTTP server.
-# addr = "0.0.0.0:1999"
+# The endpoint has no authentication, so only bind to a public address
+# (e.g. "0.0.0.0:1999") if you really want it reachable from outside.
+# addr = "127.0.0.1:1999"
 
 # How often the in-kernel statistics are read and published, in seconds.
 poll_secs = 10
@@ -194,7 +196,7 @@ impl fmt::Display for ConfigXdpMode {
 pub struct MetricsConfig {
     /// Collect statistics inside the eBPF program. Maps to `PROMETHEUS`.
     pub enabled: bool,
-    /// Optional address for the Prometheus HTTP endpoint (e.g. `0.0.0.0:1999`).
+    /// Optional address for the Prometheus HTTP endpoint (e.g. `127.0.0.1:1999`).
     pub addr: Option<String>,
     /// Seconds between reads of the in-kernel statistics map.
     pub poll_secs: u64,

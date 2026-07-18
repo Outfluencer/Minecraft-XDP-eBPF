@@ -79,6 +79,9 @@ static __s32 player_connection_idle_check(void *map, struct ipv4_flow_key *key, 
         return 0;
     }
     entry->last_packets = packets;
+    // re-arming can only fail if this entry is concurrently being freed (map
+    // delete/teardown NULLs the timer under its lock); then there is nothing
+    // left to re-arm, so the result is deliberately ignored
     bpf_timer_start(&entry->timer, PLAYER_IDLE_NS, 0);
     return 0;
 }
@@ -133,6 +136,9 @@ static __s32 throttle_window_expired(void *map, __u32 *key, struct throttle_entr
         bpf_map_delete_elem(map, key);
         return 0;
     }
+    // re-arming can only fail if this entry is concurrently being freed (map
+    // delete/teardown NULLs the timer under its lock); then there is nothing
+    // left to re-arm, so the result is deliberately ignored
     bpf_timer_start(&entry->timer, HIT_COUNT_RESET_NS, 0);
     return 0;
 }

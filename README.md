@@ -56,9 +56,11 @@ And then just run the executable.
     sudo ./target/release/xdp-loader eth0
     ```
 
-    To enable Prometheus metrics export, set `prometheus = true` and a
-    `metrics_addr` in `config.toml` (see [Configuration](#configuration)), then
-    run the loader normally. Metrics are then available at: `http://host:1999/metrics`
+    To enable Prometheus metrics export, set `enabled = true` and an `addr`
+    in the `[metrics]` section of `config.toml` (see
+    [Configuration](#configuration)), then run the loader normally. With
+    `addr = "127.0.0.1:1999"` the metrics are available at:
+    `http://127.0.0.1:1999/metrics`
 
 **Note:** This project uses a persistent XDP loader. The userspace program must stay running to keep the filter attached; all map state (throttle windows, verified connections) is managed in-kernel via `bpf_timer`. Stopping the loader will unload the firewall. Requires Linux kernel 5.15 or newer.
 
@@ -134,10 +136,4 @@ binary, so the released executable is fully self-contained.
 ### Non-root / Permission Errors
 Please always check if you are running as root if any error occurred. If you are not, try again with `sudo`.  
 
-### Maps Issue
-If you change map configurations (e.g., enabling Per-CPU maps), you might get map creation errors on restart.
-Clear the generic BPF filesystem:
-```bash
-sudo rm -r /sys/fs/bpf
-```
 ⭐ **Don't forget to star the project on GitHub!**  

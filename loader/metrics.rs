@@ -103,7 +103,9 @@ pub fn start(
 }
 
 /// Sums the per-cpu slices of the stats map and publishes the totals every
-/// `poll_interval` until shutdown (or a map read error) ends the loop.
+/// `poll_interval` until shutdown ends the loop. Read errors are logged and
+/// retried next interval: metrics are auxiliary and must never take down the
+/// filter itself.
 fn poll_loop(
     stats: PerCpuArray<MapData, Statistics>,
     shutdown: Arc<Shutdown>,
@@ -120,9 +122,7 @@ fn poll_loop(
                 COUNTERS.publish(&total);
             }
             Err(e) => {
-                error!("Failed to read stats map: {e}");
-                shutdown.trigger();
-                return;
+                error!("Failed to read stats map (retrying next interval): {e}");
             }
         }
         if !shutdown.sleep(poll_interval) {

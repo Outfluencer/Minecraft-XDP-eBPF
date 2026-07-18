@@ -531,6 +531,29 @@ static void test_handshake_combined_with_login(void)
     CHECK(run_login(pkt.b + resume, pkt.n - resume, proto) == 1);
 }
 
+static void test_handshake_rejects_length_mismatch(void)
+{
+    // valid fields, but the declared length is off by one: the backend's
+    // frame decoder would cut the stream at a different offset than the
+    // filter's state machine
+    struct buf too_big = build_handshake(763, 14, 1);
+    too_big.b[0]++;
+    CHECK(run_handshake(too_big.b, too_big.n, NULL, NULL) == STATE_INVALID);
+
+    struct buf too_small = build_handshake(763, 14, 1);
+    too_small.b[0]--;
+    CHECK(run_handshake(too_small.b, too_small.n, NULL, NULL) == STATE_INVALID);
+
+    // the appended status request must not be reachable through a lying
+    // handshake length either (the backend would read its bytes as part of
+    // the handshake frame)
+    struct buf combined = build_handshake(763, 14, 1);
+    combined.b[0]++;
+    put_u8(&combined, 0x01);
+    put_u8(&combined, 0x00);
+    CHECK(run_handshake(combined.b, combined.n, NULL, NULL) == STATE_INVALID);
+}
+
 /* ------------------------------------------------------------------------
  * Login request, all protocol eras:
  *   < 759            [id][name]
@@ -675,6 +698,21 @@ static void test_login_uuid_eras(void)
     CHECK(run_login(v765_short_pkt.b, v765_short_pkt.n, 765) == 0);
 }
 
+static void test_login_rejects_length_mismatch(void)
+{
+    // modern login (1.20.2+): name + uuid, with a length prefix off by one
+    struct buf body = build_simple_login(5);
+    put_fill(&body, 0xAB, 16); // uuid
+    struct buf pkt = packetize(&body);
+    CHECK(run_login(pkt.b, pkt.n, 765) == 1); // consistent length is fine
+
+    pkt.b[0]++;
+    CHECK(run_login(pkt.b, pkt.n, 765) == 0);
+
+    pkt.b[0] -= 2;
+    CHECK(run_login(pkt.b, pkt.n, 765) == 0);
+}
+
 /* --------------------------------------------------------------------- */
 
 int main(void)
@@ -694,10 +732,12 @@ int main(void)
     test_handshake_rejects_malformed();
     test_handshake_combined_with_status_request();
     test_handshake_combined_with_login();
+    test_handshake_rejects_length_mismatch();
     test_login_pre_1_19();
     test_login_username_rules();
     test_login_1_19_key_block();
     test_login_uuid_eras();
+    test_login_rejects_length_mismatch();
 
     printf("%u checks, %u failures\n", checks_run, checks_failed);
     return checks_failed ? 1 : 0;

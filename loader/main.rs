@@ -105,12 +105,19 @@ fn main() {
     let shutdown = Arc::new(Shutdown::new());
     shutdown::trigger_on_termination_signal(shutdown.clone());
 
-    if let Err(e) = run(&args, &config, &shutdown) {
+    let result = run(&args, &config, &shutdown);
+    if let Err(e) = &result {
         error!("{e:#}");
     }
 
     shutdown.trigger();
     info!("Good bye!");
+
+    // a failed run must be visible to service managers (systemd
+    // Restart=on-failure) and scripts, not only in the log
+    if result.is_err() {
+        std::process::exit(1);
+    }
 }
 
 /// Attaches the XDP filter and keeps it alive until shutdown is triggered.

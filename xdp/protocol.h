@@ -82,6 +82,8 @@ static __always_inline __s32 inspect_handshake(const __u8 *cursor, const __u8 *p
     // packet length
     READ_VARINT_OR_RETURN(varint, cursor, payload_end, data_end, VARINT_SIZE(PACKET_ID_MAX + HANDSHAKE_DATA_MAX));
     ASSERT_IN_RANGE_OR_RETURN(varint.value, PACKET_ID_MIN + HANDSHAKE_DATA_MIN, PACKET_ID_MAX + HANDSHAKE_DATA_MAX);
+    const __s32 declared_length = varint.value;
+    const __u8 *body_start = cursor;
 
     // packet id, must be 0
     READ_VARINT_OR_RETURN(varint, cursor, payload_end, data_end, VARINT_SIZE(0x00));
@@ -105,6 +107,11 @@ static __always_inline __s32 inspect_handshake(const __u8 *cursor, const __u8 *p
     const __u8 supports_transfer = *protocol_version >= 766;
     ASSERT_OR_RETURN(intention == 1 || intention == 2 || (supports_transfer && intention == 3));
 
+    // the declared length must match the bytes the fields actually occupy,
+    // otherwise the backend's frame decoder would split the byte stream
+    // differently than this state machine did
+    ASSERT_OR_RETURN(cursor - body_start == declared_length);
+
     // packet contained exactly the handshake
     if (cursor == payload_end)
     {
@@ -116,7 +123,15 @@ static __always_inline __s32 inspect_handshake(const __u8 *cursor, const __u8 *p
     return intention == 1 ? DIRECT_READ_STATUS_REQUEST : DIRECT_READ_LOGIN;
 }
 
-// returns 1 if the payload is exactly one valid status request packet
+/*
+ * Returns 1 if the payload is exactly one valid status request packet.
+ *
+ * A ping request pipelined into the same segment is rejected on purpose: the
+ * vanilla client sends its ping only after receiving the status response,
+ * whose segments ack the status request — so the two packets can never share
+ * a segment (not even via retransmit collapsing); only fire-and-forget
+ * scanners pipeline them.
+ */
 static __always_inline __u8 inspect_status_request(const __u8 *cursor, const __u8 *payload_end, const void *data_end)
 {
     struct varint_value varint;
@@ -158,6 +173,8 @@ static __always_inline __u8 inspect_login_packet(const __u8 *cursor, const __u8 
     // packet length
     READ_VARINT_OR_RETURN(varint, cursor, payload_end, data_end, VARINT_SIZE(PACKET_ID_MAX + LOGIN_DATA_MAX));
     ASSERT_IN_RANGE_OR_RETURN(varint.value, PACKET_ID_MIN + LOGIN_DATA_MIN, PACKET_ID_MAX + LOGIN_DATA_MAX);
+    const __s32 declared_length = varint.value;
+    const __u8 *body_start = cursor;
 
     // packet id, must be 0
     READ_VARINT_OR_RETURN(varint, cursor, payload_end, data_end, VARINT_SIZE(0x00));
@@ -208,8 +225,9 @@ static __always_inline __u8 inspect_login_packet(const __u8 *cursor, const __u8 
         }
     }
 
-    // valid only if the packet ends exactly here
-    return cursor == payload_end;
+    // valid only if the packet ends exactly here and the declared length
+    // matches the bytes actually consumed (identical framing to the backend)
+    return cursor == payload_end && cursor - body_start == declared_length;
 }
 
 #endif
