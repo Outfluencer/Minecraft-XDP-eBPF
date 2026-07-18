@@ -5,6 +5,8 @@ It effectively mitigates L7 DDoS attacks by filtering malicious packets at the k
 Currently, the filter is available for IPv4 and supports Minecraft versions 1.8 - 26.2    
 The default filtered port is 25565.
 
+💬 Questions, feedback or help needed? Join the Discord: https://discord.gg/JnBJPgV4GW
+
 ## Features
 - **Protocol Analysis**: Analyzes Minecraft handshakes, status, ping, and login requests.
 - **Deep Packet Inspection**: Drops invalid packets, bad VarInts, and protocol violations.
