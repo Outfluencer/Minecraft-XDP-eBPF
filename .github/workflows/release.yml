@@ -22,13 +22,13 @@ jobs:
         sudo apt install -y gcc-multilib wget gnupg software-properties-common git libbpf-dev musl-tools
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
-        sudo ./llvm.sh 21 all
-        sudo update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-21/bin/clang 100
-        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-21/bin/clang++ 100
-        sudo update-alternatives --set clang /usr/lib/llvm-21/bin/clang
-        sudo update-alternatives --set clang++ /usr/lib/llvm-21/bin/clang++
-        sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/lib/llvm-21/bin/llvm-strip 100
-        sudo update-alternatives --set llvm-strip /usr/lib/llvm-21/bin/llvm-strip
+        sudo ./llvm.sh 22 all
+        sudo update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-22/bin/clang 100
+        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-22/bin/clang++ 100
+        sudo update-alternatives --set clang /usr/lib/llvm-22/bin/clang
+        sudo update-alternatives --set clang++ /usr/lib/llvm-22/bin/clang++
+        sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/lib/llvm-22/bin/llvm-strip 100
+        sudo update-alternatives --set llvm-strip /usr/lib/llvm-22/bin/llvm-strip
     - name: Install musl target
       run: rustup target add x86_64-unknown-linux-musl
     - name: Read version
