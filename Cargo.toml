@@ -1,6 +1,6 @@
 [package]
 name = "xdp-loader"
-version = "3.0.3"
+version = "3.0.4"
 edition = "2024"
 
 # userspace loader lives in loader/ instead of the default src/
