@@ -9,7 +9,7 @@ name = "xdp-loader"
 path = "loader/main.rs"
 
 [dependencies]
-aya = "0.14"
+aya = "0.16"
 log = "0.4.33"
 signal-hook = "0.4.4"
 anyhow = "1.0.103"
