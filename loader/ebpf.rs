@@ -1,3 +1,5 @@
+use std::ffi::CString;
+
 use anyhow::{Context, Result};
 use aya::programs::{Xdp, XdpMode};
 use aya::{Ebpf, EbpfLoader, include_bytes_aligned};
@@ -58,32 +60,35 @@ pub fn load_and_attach(interface: &str, config: &Config) -> Result<Ebpf> {
         .try_into()?;
     program.load()?;
 
+    // aya takes interface names as C strings; `interface` stays around for
+    // the log and error messages
+    let ifname =
+        CString::new(interface).with_context(|| format!("invalid interface name '{interface}'"))?;
+
     // Auto does its own driver -> skb fallback instead of leaving the choice
     // to the kernel, so the mode that is actually active can be logged.
     let (link, mode) = match config.xdp.mode {
-        ConfigXdpMode::Auto => match program.attach(interface, XdpMode::Driver) {
+        ConfigXdpMode::Auto => match program.attach(&ifname, XdpMode::Driver) {
             Ok(link) => (link, ConfigXdpMode::Driver),
             Err(err) => {
                 info!("'{interface}' does not support native XDP ({err}), using generic skb mode");
                 let link = program
-                    .attach(interface, aya::programs::XdpMode::Skb)
+                    .attach(&ifname, aya::programs::XdpMode::Skb)
                     .with_context(|| format!("failed to attach to interface '{interface}'"))?;
                 (link, ConfigXdpMode::Skb)
             }
         },
         ConfigXdpMode::Driver => {
-            let link = program
-                .attach(interface, XdpMode::Driver)
-                .with_context(|| {
-                    format!(
-                        "failed to attach to interface '{interface}' in native driver mode \
+            let link = program.attach(&ifname, XdpMode::Driver).with_context(|| {
+                format!(
+                    "failed to attach to interface '{interface}' in native driver mode \
                      (the NIC driver may not support XDP; try mode = \"skb\")"
-                    )
-                })?;
+                )
+            })?;
             (link, ConfigXdpMode::Driver)
         }
         ConfigXdpMode::Skb => {
-            let link = program.attach(interface, XdpMode::Skb).with_context(|| {
+            let link = program.attach(&ifname, XdpMode::Skb).with_context(|| {
                 format!("failed to attach to interface '{interface}' in skb mode")
             })?;
             (link, ConfigXdpMode::Skb)

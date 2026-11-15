@@ -23,7 +23,7 @@ You can download the latest build from the Releases Tab
 Then just run the executable in sudo mode or via root
 
 ### Prerequisites
-- Rust toolchain (stable)
+- Rust toolchain (stable, 1.98 or newer)
 - **System Dependencies**:
   ```bash
   sudo apt update
