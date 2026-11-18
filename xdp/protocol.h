@@ -23,6 +23,16 @@
 #define PACKET_ID_MIN MIN_VARINT_BYTES
 #define PACKET_ID_MAX MAX_VARINT_BYTES
 
+// protocol versions where the inspected packets changed
+#define PROTOCOL_1_19 759
+#define PROTOCOL_1_19_1 760
+#define PROTOCOL_1_19_3 761
+#define PROTOCOL_1_20_2 764
+#define PROTOCOL_1_20_5 766
+// 26.4 snapshot (snapshot ids are 0x40000000 | n); has to be replaced with
+// the release protocol id once 26.4 is released, like in BungeeCord
+#define PROTOCOL_26_4 0x4000015C // 1073742172
+
 // handshake packet: protocol version, server host, server port, intention
 #define HANDSHAKE_VERSION_MIN MIN_VARINT_BYTES
 #define HANDSHAKE_VERSION_MAX MAX_VARINT_BYTES
@@ -30,8 +40,11 @@
 #define HANDSHAKE_HOSTLEN_MIN MIN_VARINT_BYTES
 #define HANDSHAKE_HOSTLEN_MAX MAX_VARINT_BYTES
 
+// since 26.4 the host may carry additional connection properties
+// (host?key=value&...), so its limit was raised from 255 to 1024 chars
 #define HANDSHAKE_HOST_DATA_MIN (0)
-#define HANDSHAKE_HOST_DATA_MAX (255 * UTF8_MAX_BYTES)
+#define HANDSHAKE_HOST_DATA_MAX_LEGACY (255 * UTF8_MAX_BYTES)
+#define HANDSHAKE_HOST_DATA_MAX (1024 * UTF8_MAX_BYTES)
 
 #define HANDSHAKE_PORT_LEN (2)
 
@@ -94,8 +107,9 @@ static __always_inline __s32 inspect_handshake(const __u8 *cursor, const __u8 *p
     *protocol_version = varint.value;
 
     // host length, then skip the host data
+    const __s32 host_data_max = *protocol_version >= PROTOCOL_26_4 ? HANDSHAKE_HOST_DATA_MAX : HANDSHAKE_HOST_DATA_MAX_LEGACY;
     READ_VARINT_OR_RETURN(varint, cursor, payload_end, data_end, VARINT_SIZE(HANDSHAKE_HOST_DATA_MAX));
-    ASSERT_IN_RANGE_OR_RETURN(varint.value, HANDSHAKE_HOST_DATA_MIN, HANDSHAKE_HOST_DATA_MAX);
+    ASSERT_IN_RANGE_OR_RETURN(varint.value, HANDSHAKE_HOST_DATA_MIN, host_data_max);
     SKIP_OR_RETURN(cursor, varint.value, payload_end, data_end);
 
     // server port
@@ -104,7 +118,7 @@ static __always_inline __s32 inspect_handshake(const __u8 *cursor, const __u8 *p
     // intention: 1 (status), 2 (login), 3 (login via transfer, since 1.20.5)
     READ_VARINT_OR_RETURN(varint, cursor, payload_end, data_end, VARINT_SIZE(3));
     const __s32 intention = varint.value;
-    const __u8 supports_transfer = *protocol_version >= 766;
+    const __u8 supports_transfer = *protocol_version >= PROTOCOL_1_20_5;
     ASSERT_OR_RETURN(intention == 1 || intention == 2 || (supports_transfer && intention == 3));
 
     // the declared length must match the bytes the fields actually occupy,
@@ -186,7 +200,7 @@ static __always_inline __u8 inspect_login_packet(const __u8 *cursor, const __u8 
     SKIP_OR_RETURN(cursor, varint.value, payload_end, data_end);
 
     // optional chat signing key, 1.19 (759) up to 1.19.3 (761)
-    if (protocol_version >= 759 && protocol_version < 761)
+    if (protocol_version >= PROTOCOL_1_19 && protocol_version < PROTOCOL_1_19_3)
     {
         __u8 has_public_key;
         READ_VAL_OR_RETURN(has_public_key, cursor, payload_end, data_end);
@@ -208,9 +222,9 @@ static __always_inline __u8 inspect_login_packet(const __u8 *cursor, const __u8 
     }
 
     // uuid, optional from 1.19.1 (760), always present since 1.20.2 (764)
-    if (protocol_version >= 760)
+    if (protocol_version >= PROTOCOL_1_19_1)
     {
-        if (protocol_version >= 764)
+        if (protocol_version >= PROTOCOL_1_20_2)
         {
             SKIP_OR_RETURN(cursor, UUID_LEN, payload_end, data_end);
         }

@@ -72,7 +72,7 @@ static __u32 write_varint(__u8 *out, __s32 value)
 
 struct buf
 {
-    __u8 b[2048];
+    __u8 b[4096];
     __u32 n;
 };
 
@@ -476,9 +476,9 @@ static void test_handshake_rejects_malformed(void)
     const __u8 len_too_small[] = {0x03, 0x00, 0x00};
     CHECK(run_handshake(len_too_small, 3, NULL, NULL) == STATE_INVALID);
 
-    // length field above the maximum (787)
+    // length field above the maximum (3094, with the 26.4 host limit)
     struct buf len_too_big = {{0}, 0};
-    put_varint(&len_too_big, 788);
+    put_varint(&len_too_big, 3095);
     put_fill(&len_too_big, 0x00, 8);
     CHECK(run_handshake(len_too_big.b, len_too_big.n, NULL, NULL) == STATE_INVALID);
 
@@ -493,6 +493,30 @@ static void test_handshake_rejects_malformed(void)
     // empty host is allowed by the protocol bounds
     struct buf host_empty = build_handshake(763, 0, 1);
     CHECK(run_handshake(host_empty.b, host_empty.n, NULL, NULL) == AWAIT_STATUS_REQUEST);
+}
+
+static void test_handshake_26_4_host_properties(void)
+{
+    __s32 proto = 0;
+
+    // 26.4 raised the host limit to 1024 chars (1024 * 3 = 3072 bytes), the
+    // host may now carry connection properties (host?key=value&...)
+    struct buf host_max = build_handshake(PROTOCOL_26_4, 3072, 2);
+    CHECK(run_handshake(host_max.b, host_max.n, &proto, NULL) == AWAIT_LOGIN);
+    CHECK(proto == PROTOCOL_26_4);
+
+    struct buf host_too_long = build_handshake(PROTOCOL_26_4, 3073, 2);
+    CHECK(run_handshake(host_too_long.b, host_too_long.n, NULL, NULL) == STATE_INVALID);
+
+    // older versions keep the 255 char limit
+    struct buf host_old = build_handshake(PROTOCOL_26_4 - 1, 766, 2);
+    CHECK(run_handshake(host_old.b, host_old.n, NULL, NULL) == STATE_INVALID);
+    struct buf host_release = build_handshake(777, 766, 2);
+    CHECK(run_handshake(host_release.b, host_release.n, NULL, NULL) == STATE_INVALID);
+
+    // snapshot ids are huge, all version gated features stay enabled
+    struct buf transfer = build_handshake(PROTOCOL_26_4, 14, 3);
+    CHECK(run_handshake(transfer.b, transfer.n, NULL, NULL) == AWAIT_LOGIN);
 }
 
 static void test_handshake_combined_with_status_request(void)
@@ -690,6 +714,8 @@ static void test_login_uuid_eras(void)
     put_fill(&v765, 0xAB, 16);
     struct buf v765_pkt = packetize(&v765);
     CHECK(run_login(v765_pkt.b, v765_pkt.n, 765) == 1);
+    // the login request did not change in the 26.4 snapshot
+    CHECK(run_login(v765_pkt.b, v765_pkt.n, PROTOCOL_26_4) == 1);
 
     // truncated uuid
     struct buf v765_short = build_simple_login(5);
@@ -730,6 +756,7 @@ int main(void)
     test_handshake_intentions();
     test_handshake_legacy_ping();
     test_handshake_rejects_malformed();
+    test_handshake_26_4_host_properties();
     test_handshake_combined_with_status_request();
     test_handshake_combined_with_login();
     test_handshake_rejects_length_mismatch();
