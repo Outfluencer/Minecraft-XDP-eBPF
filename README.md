@@ -66,6 +66,16 @@ Then just run the executable in sudo mode or via root
     `addr = "127.0.0.1:1999"` the metrics are available at:
     `http://127.0.0.1:1999/metrics`
 
+4.  **Check a configuration** (optional):
+    ```bash
+    sudo ./target/release/xdp-loader --check
+    ```
+    Loads the filter with the current `config.toml` into the kernel and
+    unloads it again without attaching it to any interface. The verifier
+    log is printed if the kernel rejects the program. Useful after editing
+    the config, on a new kernel, or before restarting a running loader:
+    a running filter is not touched.
+
 **Note:** This project uses a persistent XDP loader. The userspace program must stay running to keep the filter attached; all map state (throttle windows, verified connections) is managed in-kernel via `bpf_timer`. Stopping the loader will unload the firewall. Requires Linux kernel 5.15 or newer.
 
 ## Configuration
