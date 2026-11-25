@@ -17,23 +17,29 @@ const USAGE: &str = "\
 Usage: xdp-loader [OPTIONS] <INTERFACE>
 
 Arguments:
-  <INTERFACE>  Network interface to attach to
+  <INTERFACE>  Network interface to attach to (not needed with --check)
 
 Options:
   -c, --config <FILE>  Path to the TOML configuration file, created with
                        defaults if missing [default: config.toml]
+      --check          Load the filter with this configuration into the
+                       kernel to see whether the verifier accepts it, then
+                       exit without attaching anything
       --license        Print license information
   -h, --help           Print help
   -V, --version        Print version";
 
 #[derive(Debug)]
 struct Args {
-    /// Network interface to attach to, required unless --license is given.
+    /// Network interface to attach to, required unless --license or --check
+    /// is given.
     interface: Option<String>,
     /// Path to the TOML configuration file.
     config: String,
     /// Print license information instead of running.
     license: bool,
+    /// Only check that the kernel accepts the program, attach nothing.
+    check: bool,
 }
 
 /// Hand-rolled argument parsing (a CLI library would double the binary size
@@ -43,6 +49,7 @@ fn parse_args() -> Args {
         interface: None,
         config: "config.toml".into(),
         license: false,
+        check: false,
     };
 
     let mut argv = std::env::args().skip(1);
@@ -61,6 +68,7 @@ fn parse_args() -> Args {
                 std::process::exit(0);
             }
             "--license" => args.license = true,
+            "--check" => args.check = true,
             "-c" | "--config" => match argv.next() {
                 Some(value) => args.config = value,
                 None => invalid(format!("missing value for '{arg} <FILE>'")),
@@ -74,7 +82,7 @@ fn parse_args() -> Args {
         }
     }
 
-    if args.interface.is_none() && !args.license {
+    if args.interface.is_none() && !args.license && !args.check {
         invalid("missing required argument <INTERFACE>".into());
     }
     args
@@ -126,10 +134,16 @@ fn main() {
 /// Attaches the XDP filter and keeps it alive until shutdown is triggered.
 /// Dropping the `Ebpf` handle on return detaches the filter again.
 fn run(args: &Args, config: &Config, shutdown: &Arc<Shutdown>) -> Result<()> {
+    if args.check {
+        ebpf::check(config)?;
+        info!("The kernel accepted the filter with this configuration");
+        return Ok(());
+    }
+
     let interface = args
         .interface
         .as_deref()
-        .context("interface is required unless --license is specified")?;
+        .context("interface is required unless --license or --check is specified")?;
 
     // keep the handle alive until the end of this function: dropping it
     // detaches the XDP program

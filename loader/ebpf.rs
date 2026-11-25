@@ -15,6 +15,65 @@ use crate::config::{Config, ConfigXdpMode};
 /// (throttle windows, idle player connections) happens in-kernel via
 /// `bpf_timer`.
 pub fn load_and_attach(interface: &str, config: &Config) -> Result<Ebpf> {
+    let mut ebpf = load(config)?;
+    let program: &mut Xdp = ebpf
+        .program_mut("minecraft_filter")
+        .context("program 'minecraft_filter' not found")?
+        .try_into()?;
+
+    // aya takes interface names as C strings; `interface` stays around for
+    // the log and error messages
+    let ifname =
+        CString::new(interface).with_context(|| format!("invalid interface name '{interface}'"))?;
+
+    // Auto does its own driver -> skb fallback instead of leaving the choice
+    // to the kernel, so the mode that is actually active can be logged.
+    let (link, mode) = match config.xdp.mode {
+        ConfigXdpMode::Auto => match program.attach(&ifname, XdpMode::Driver) {
+            Ok(link) => (link, ConfigXdpMode::Driver),
+            Err(err) => {
+                info!("'{interface}' does not support native XDP ({err}), using generic skb mode");
+                let link = program
+                    .attach(&ifname, aya::programs::XdpMode::Skb)
+                    .with_context(|| format!("failed to attach to interface '{interface}'"))?;
+                (link, ConfigXdpMode::Skb)
+            }
+        },
+        ConfigXdpMode::Driver => {
+            let link = program.attach(&ifname, XdpMode::Driver).with_context(|| {
+                format!(
+                    "failed to attach to interface '{interface}' in native driver mode \
+                     (the NIC driver may not support XDP; try mode = \"skb\")"
+                )
+            })?;
+            (link, ConfigXdpMode::Driver)
+        }
+        ConfigXdpMode::Skb => {
+            let link = program.attach(&ifname, XdpMode::Skb).with_context(|| {
+                format!("failed to attach to interface '{interface}' in skb mode")
+            })?;
+            (link, ConfigXdpMode::Skb)
+        }
+    };
+    info!("BPF program attached to interface {interface} in {mode} mode ({link:?})");
+
+    for (name, _) in ebpf.maps() {
+        info!("Found map: {name}");
+    }
+
+    Ok(ebpf)
+}
+
+/// `xdp-loader --check`: loads the filter with this configuration into the
+/// kernel, which runs it through the verifier, and unloads it again.
+/// Nothing is attached to any interface.
+pub fn check(config: &Config) -> Result<()> {
+    load(config).map(drop)
+}
+
+/// Loads the embedded eBPF object with the runtime configuration applied and
+/// runs the program through the kernel verifier, without attaching it.
+fn load(config: &Config) -> Result<Ebpf> {
     let object = include_bytes_aligned!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/xdp/minecraft_filter.o"
@@ -58,47 +117,9 @@ pub fn load_and_attach(interface: &str, config: &Config) -> Result<Ebpf> {
         .program_mut("minecraft_filter")
         .context("program 'minecraft_filter' not found")?
         .try_into()?;
-    program.load()?;
-
-    // aya takes interface names as C strings; `interface` stays around for
-    // the log and error messages
-    let ifname =
-        CString::new(interface).with_context(|| format!("invalid interface name '{interface}'"))?;
-
-    // Auto does its own driver -> skb fallback instead of leaving the choice
-    // to the kernel, so the mode that is actually active can be logged.
-    let (link, mode) = match config.xdp.mode {
-        ConfigXdpMode::Auto => match program.attach(&ifname, XdpMode::Driver) {
-            Ok(link) => (link, ConfigXdpMode::Driver),
-            Err(err) => {
-                info!("'{interface}' does not support native XDP ({err}), using generic skb mode");
-                let link = program
-                    .attach(&ifname, aya::programs::XdpMode::Skb)
-                    .with_context(|| format!("failed to attach to interface '{interface}'"))?;
-                (link, ConfigXdpMode::Skb)
-            }
-        },
-        ConfigXdpMode::Driver => {
-            let link = program.attach(&ifname, XdpMode::Driver).with_context(|| {
-                format!(
-                    "failed to attach to interface '{interface}' in native driver mode \
-                     (the NIC driver may not support XDP; try mode = \"skb\")"
-                )
-            })?;
-            (link, ConfigXdpMode::Driver)
-        }
-        ConfigXdpMode::Skb => {
-            let link = program.attach(&ifname, XdpMode::Skb).with_context(|| {
-                format!("failed to attach to interface '{interface}' in skb mode")
-            })?;
-            (link, ConfigXdpMode::Skb)
-        }
-    };
-    info!("BPF program attached to interface {interface} in {mode} mode ({link:?})");
-
-    for (name, _) in ebpf.maps() {
-        info!("Found map: {name}");
-    }
+    program
+        .load()
+        .context("the kernel rejected the BPF program")?;
 
     Ok(ebpf)
 }
